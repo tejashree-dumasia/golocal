@@ -1,0 +1,2 @@
+# golocal
+Social Trip Planner
