@@ -147,3 +147,8 @@ vite.config.ts.timestamp-*
 
 # Turbo Repo
 .turbo
+node_modules/
+.env
+*.pem
+*.json (only for your firebase-admin-key.json)
+.DS_Storebackend/firebase-admin-key.json
