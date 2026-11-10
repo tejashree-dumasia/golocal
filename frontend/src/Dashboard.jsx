@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { auth } from './firebase'
-import { signOut } from 'firebase/auth'
+import { signOut, onAuthStateChanged } from 'firebase/auth' // Import onAuthStateChanged
 import { useNavigate } from 'react-router-dom'
 
 export default function Dashboard() {
@@ -14,30 +14,34 @@ export default function Dashboard() {
     const [formData, setFormData] = useState({ title: '', description: '', budget: '' })
 
     useEffect(() => {
-        const fetchTrips = async () => {
-            try {
-                const user = auth.currentUser
-                if (!user) return
+        // Wait for Firebase to verify session state instead of using a timeout
+        const unsubscribe = onAuthStateChanged(auth, async (user) => {
+            if (user) {
+                try {
+                    const token = await user.getIdToken()
+                    const response = await fetch(`${import.meta.env.VITE_API_BASE_URL}/trips`, {
+                        headers: { 'Authorization': `Bearer ${token}` }
+                    })
 
-                const token = await user.getIdToken()
-                const response = await fetch('http://localhost:3000/api/v1/trips', {
-                    headers: { 'Authorization': `Bearer ${token}` }
-                })
-
-                const data = await response.json()
-                if (response.ok) {
-                    setTrips(data.trips)
+                    const data = await response.json()
+                    if (response.ok) {
+                        setTrips(data.trips)
+                    } else {
+                        console.error('Failed to fetch trips:', data.error)
+                    }
+                } catch (error) {
+                    console.error('Network error fetching trips:', error)
+                } finally {
+                    setLoading(false)
                 }
-            } catch (error) {
-                console.error('Failed to fetch trips:', error)
-            } finally {
-                setLoading(false)
+            } else {
+                // If user becomes null (logged out or session expired), redirect home
+                navigate('/')
             }
-        }
+        })
 
-        const timeoutId = setTimeout(fetchTrips, 500)
-        return () => clearTimeout(timeoutId)
-    }, [])
+        return () => unsubscribe()
+    }, [navigate])
 
     const handleLogout = async () => {
         await signOut(auth)
@@ -50,7 +54,7 @@ export default function Dashboard() {
 
         try {
             const token = await auth.currentUser.getIdToken()
-            const response = await fetch('http://localhost:3000/api/v1/trips', {
+            const response = await fetch(`${import.meta.env.VITE_API_BASE_URL}/trips`, {
                 method: 'POST',
                 headers: {
                     'Authorization': `Bearer ${token}`,

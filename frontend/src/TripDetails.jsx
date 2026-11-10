@@ -2,6 +2,7 @@ import ChatBox from './ChatBox'
 import { useEffect, useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { auth } from './firebase'
+import { onAuthStateChanged } from 'firebase/auth'
 
 export default function TripDetails() {
     const { id } = useParams() // Grabs the trip ID from the URL
@@ -17,34 +18,37 @@ export default function TripDetails() {
     const [isInviting, setIsInviting] = useState(false)
 
     useEffect(() => {
-        const fetchLocations = async () => {
-            try {
-                const user = auth.currentUser
-                if (!user) return // Prevents crash before auth loads
-
-                const token = await user.getIdToken()
-                const response = await fetch(`http://localhost:3000/api/v1/trips/${id}/locations`, {
-                    headers: { 'Authorization': `Bearer ${token}` }
-                })
-                const data = await response.json()
-                if (response.ok) {
-                    setLocations(data.locations)
+        const unsubscribe = onAuthStateChanged(auth, async (user) => {
+            if (user) {
+                try {
+                    const token = await user.getIdToken()
+                    const response = await fetch(`${import.meta.env.VITE_API_URL}/api/v1/trips/${id}/locations`, {
+                        headers: { 'Authorization': `Bearer ${token}` }
+                    })
+                    const data = await response.json()
+                    if (response.ok) {
+                        setLocations(data.locations)
+                    }
+                } catch (error) {
+                    console.error('Failed to fetch locations:', error)
+                } finally {
+                    setLoading(false)
                 }
-            } catch (error) {
-                console.error('Failed to fetch locations:', error)
-            } finally {
-                setLoading(false)
+            } else {
+                // If they logged out or session expired, boot them to login
+                navigate('/')
             }
-        }
-        fetchLocations()
-    }, [id])
+        })
+        
+        return () => unsubscribe()
+    }, [id, navigate])
 
     const handleAddLocation = async (e) => {
         e.preventDefault()
         setIsAdding(true)
         try {
             const token = await auth.currentUser.getIdToken()
-            const response = await fetch(`http://localhost:3000/api/v1/trips/${id}/locations`, {
+            const response = await fetch(`${import.meta.env.VITE_API_BASE_URL}/trips/${id}/locations`, {
                 method: 'POST',
                 headers: {
                     'Authorization': `Bearer ${token}`,
@@ -69,7 +73,7 @@ export default function TripDetails() {
         setIsInviting(true)
         try {
             const token = await auth.currentUser.getIdToken()
-            const response = await fetch(`http://localhost:3000/api/v1/trips/${id}/invite`, {
+            const response = await fetch(`${import.meta.env.VITE_API_BASE_URL}/trips/${id}/invite`, {
                 method: 'POST',
                 headers: {
                     'Authorization': `Bearer ${token}`,

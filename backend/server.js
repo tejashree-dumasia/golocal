@@ -26,7 +26,7 @@ const firebaseApp = initializeApp({
 // 2. Initialize Express & DB
 const app = express();
 app.use(cors({
-  origin: "http://localhost:5173",
+  origin: process.env.CLIENT_URL || "http://localhost:5173",
   credentials: true
 }));
 app.use(express.json());
@@ -193,15 +193,25 @@ app.post('/api/v1/trips/:tripId/locations', verifyToken, async (req, res) => {
   }
 });
 
- // GET ALL MESSAGES FOR A TRIP
+// GET ALL MESSAGES FOR A TRIP
 app.get('/api/v1/trips/:tripId/messages', verifyToken, async (req, res) => {
   try {
     const { tripId } = req.params;
     
-    // Fetch chat history from the database
-    const chatHistory = await db.select()
+    // Join messages and users table to get the display name
+    const chatHistory = await db
+      .select({
+        id: schema.messages.id,
+        tripId: schema.messages.tripId,
+        senderId: schema.messages.senderId,
+        content: schema.messages.content,
+        createdAt: schema.messages.createdAt,
+        displayName: schema.users.name // Grab the name from the users table
+      })
       .from(schema.messages)
-      .where(eq(schema.messages.tripId, tripId));
+      .leftJoin(schema.users, eq(schema.messages.senderId, schema.users.id))
+      .where(eq(schema.messages.tripId, tripId))
+      .orderBy(schema.messages.createdAt); // Ensure they load in chronological order
 
     res.status(200).json({ messages: chatHistory });
   } catch (error) {
@@ -209,36 +219,6 @@ app.get('/api/v1/trips/:tripId/messages', verifyToken, async (req, res) => {
     res.status(500).json({ error: 'Failed to fetch messages' });
   }
 });
-// INVITE A FRIEND VIA EMAIL
-// app.post('/api/v1/trips/:tripId/invite', verifyToken, async (req, res) => {
-//   try {
-//     const { tripId } = req.params;
-//     const { email } = req.body;
-
-//     const { data, error } = await resend.emails.send({
-//       from: 'GoLocal <onboarding@resend.dev>', // Resend's testing email
-//       to: email, // Enter your own email when testing on the free tier
-//       subject: 'You have been invited to a GoLocal trip!',
-//       html: `
-//         <h2>Pack your bags! 🎒</h2>
-//         <p>Your friend has invited you to collaborate on a trip itinerary.</p>
-//         <a href="http://localhost:5173/trip/${tripId}" style="display:inline-block; padding:10px 20px; background-color:#4f46e5; color:white; text-decoration:none; border-radius:5px;">
-//           Open Trip Workspace
-//         </a>
-//       `
-//     });
-
-//     if (error) {
-//       console.error('Resend error:', error);
-//       return res.status(400).json({ error });
-//     }
-
-//     res.status(200).json({ message: 'Invite sent successfully', data });
-//   } catch (error) {
-//     console.error('Error sending invite:', error);
-//     res.status(500).json({ error: 'Failed to send invite' });
-//   }
-// });
 
 // INVITE A FRIEND VIA EMAIL
 app.post('/api/v1/trips/:tripId/invite', verifyToken, async (req, res) => {
@@ -248,7 +228,7 @@ app.post('/api/v1/trips/:tripId/invite', verifyToken, async (req, res) => {
 
     const { data, error } = await resend.emails.send({
       // 1. Update the 'from' email to use your verified domain
-      from: 'GoLocal <itejashreedumasia.me>', 
+      from: 'GoLocal <invite@tejashreedumasia.me>', 
       // 2. You can now pass the user's input email directly
       to: email, 
       subject: 'You have been invited to a GoLocal trip!',
@@ -281,6 +261,9 @@ io.on('connection', (socket) => {
     socket.join(tripId);
   });
 
+  socket.on('leave_trip', (tripId) => {
+    socket.leave(tripId);
+  });
   
  // 2. User sends a message
   socket.on('send_message', async (data) => {

@@ -1,8 +1,9 @@
 import { useState, useEffect, useRef } from 'react'
 import { io } from 'socket.io-client'
 import { auth } from './firebase'
+import { onAuthStateChanged } from 'firebase/auth'
 
-const socket = io('http://localhost:3000')
+const socket = io(import.meta.env.VITE_API_URL)
 
 export default function ChatBox({ tripId }) {
   const [messages, setMessages] = useState([])
@@ -10,37 +11,34 @@ export default function ChatBox({ tripId }) {
   const chatContainerRef = useRef(null)
 
   useEffect(() => {
-    // 1. Fetch existing chat history from Postgres
-    const fetchHistory = async () => {
-      try {
-        const user = auth.currentUser
-        if (!user) return
-        const token = await user.getIdToken()
-        
-        const response = await fetch(`http://localhost:3000/api/v1/trips/${tripId}/messages`, {
-          headers: { 'Authorization': `Bearer ${token}` }
-        })
-        
-        const data = await response.json()
-        if (response.ok) {
-          setMessages(data.messages)
+    // 1. Fetch history ONLY after Firebase confirms auth state
+    const unsubscribeAuth = onAuthStateChanged(auth, async (user) => {
+      if (user) {
+        try {
+          const token = await user.getIdToken()
+          const response = await fetch(`${import.meta.env.VITE_API_URL}/api/v1/trips/${tripId}/messages`, {
+            headers: { 'Authorization': `Bearer ${token}` }
+          })
+          const data = await response.json()
+          if (response.ok) {
+            setMessages(data.messages)
+          }
+        } catch (error) {
+          console.error('Failed to load chat history:', error)
         }
-      } catch (error) {
-        console.error('Failed to load chat history:', error)
       }
-    }
-
-    fetchHistory()
+    })
 
     // 2. Connect to live socket room
     socket.emit('join_trip', tripId)
-
-    // 3. Listen for new incoming messages
     socket.on('receive_message', (message) => {
       setMessages((prev) => [...prev, message])
     })
 
+    // 3. Cleanup everything on unmount
     return () => {
+      unsubscribeAuth() // Clean up auth listener
+      socket.emit('leave_trip', tripId) // Leave socket room
       socket.off('receive_message')
     }
   }, [tripId])
@@ -57,6 +55,10 @@ export default function ChatBox({ tripId }) {
     if (!newMessage.trim()) return
 
     const user = auth.currentUser
+    if (!user) {
+      alert("Session expired. Please refresh the page.")
+      return
+    }
     
     socket.emit('send_message', {
       tripId,
