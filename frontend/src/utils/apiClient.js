@@ -8,17 +8,20 @@ export const fetchApi = async (endpoint, options = {}) => {
     token = await user.getIdToken();
   }
 
-  const defaultHeaders = {
+  const headers = {
     'Content-Type': 'application/json',
-    ...(token && { 'Authorization': `Bearer ${token}` })
+    ...(token && { 'Authorization': `Bearer ${token}` }),
+    ...options.headers,
   };
+
+  // SENIOR MOVE: If body is FormData, let the browser set the Content-Type with the boundary
+  if (options.body instanceof FormData) {
+    delete headers['Content-Type'];
+  }
 
   const response = await fetch(`${import.meta.env.VITE_API_BASE_URL}${endpoint}`, {
     ...options,
-    headers: {
-      ...defaultHeaders,
-      ...options.headers,
-    },
+    headers,
   });
 
   if (!response.ok) {
