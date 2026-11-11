@@ -1,88 +1,66 @@
-import { useEffect, useState } from 'react'
-import { auth } from './firebase'
-import { signOut, onAuthStateChanged } from 'firebase/auth' // Import onAuthStateChanged
-import { useNavigate } from 'react-router-dom'
+import { useState, useEffect } from 'react';
+import { auth } from './firebase';
+import { signOut, onAuthStateChanged } from 'firebase/auth';
+import { useNavigate } from 'react-router-dom';
+import { useTrips } from './hooks/useTrips';
+import { fetchApi } from './utils/apiClient';
+import { useQueryClient } from '@tanstack/react-query'; // Added this
 
 export default function Dashboard() {
-    const [trips, setTrips] = useState([])
-    const [loading, setLoading] = useState(true)
-    const navigate = useNavigate()
+    const navigate = useNavigate();
+    const queryClient = useQueryClient(); // Used to trigger background refreshes
 
-    // Modal State
-    const [showModal, setShowModal] = useState(false)
-    const [isCreating, setIsCreating] = useState(false)
-    const [formData, setFormData] = useState({ title: '', description: '', budget: '' })
+    // 1. React Query handles all fetching, loading, and error states!
+    const { data, isLoading, error } = useTrips();
+    const trips = data?.trips || [];
 
+    // Modal State (Local state is still perfect for UI toggles)
+    const [showModal, setShowModal] = useState(false);
+    const [isCreating, setIsCreating] = useState(false);
+    const [formData, setFormData] = useState({ title: '', description: '', budget: '' });
+
+    // 2. We only need useEffect for Auth redirection now
     useEffect(() => {
-        // Wait for Firebase to verify session state instead of using a timeout
-        const unsubscribe = onAuthStateChanged(auth, async (user) => {
-            if (user) {
-                try {
-                    const token = await user.getIdToken()
-                    const response = await fetch(`${import.meta.env.VITE_API_BASE_URL}/trips`, {
-                        headers: { 'Authorization': `Bearer ${token}` }
-                    })
-
-                    const data = await response.json()
-                    if (response.ok) {
-                        setTrips(data.trips)
-                    } else {
-                        console.error('Failed to fetch trips:', data.error)
-                    }
-                } catch (error) {
-                    console.error('Network error fetching trips:', error)
-                } finally {
-                    setLoading(false)
-                }
-            } else {
-                // If user becomes null (logged out or session expired), redirect home
-                navigate('/')
-            }
-        })
-
-        return () => unsubscribe()
-    }, [navigate])
+        const unsubscribe = onAuthStateChanged(auth, (user) => {
+            if (!user) navigate('/');
+        });
+        return () => unsubscribe();
+    }, [navigate]);
 
     const handleLogout = async () => {
-        await signOut(auth)
-        navigate('/')
-    }
+        await signOut(auth);
+        navigate('/');
+    };
 
     const handleCreateTrip = async (e) => {
-        e.preventDefault()
-        setIsCreating(true)
+        e.preventDefault();
+        setIsCreating(true);
 
         try {
-            const token = await auth.currentUser.getIdToken()
-            const response = await fetch(`${import.meta.env.VITE_API_BASE_URL}/trips`, {
+            // Using your new centralized fetchApi!
+            await fetchApi('/trips', {
                 method: 'POST',
-                headers: {
-                    'Authorization': `Bearer ${token}`,
-                    'Content-Type': 'application/json'
-                },
                 body: JSON.stringify({
                     title: formData.title,
                     description: formData.description,
                     budget: Number(formData.budget) || null
                 })
-            })
+            });
 
-            const data = await response.json()
-
-            if (response.ok) {
-                // Add the new trip to the UI instantly and append 'host' role
-                setTrips([...trips, { ...data.trip, role: 'host' }])
-                setShowModal(false)
-                setFormData({ title: '', description: '', budget: '' }) // Reset form
-            } else {
-                console.error('Backend error:', data.error)
-            }
+            // Tell React Query to automatically refetch the trips list
+            queryClient.invalidateQueries(['trips']); 
+            
+            setShowModal(false);
+            setFormData({ title: '', description: '', budget: '' });
         } catch (error) {
-            console.error('Failed to create trip:', error)
+            console.error('Failed to create trip:', error);
         } finally {
-            setIsCreating(false)
+            setIsCreating(false);
         }
-    }
+    };
+
+    if (isLoading) return <div className="p-8 text-center text-gray-500">Loading your trips...</div>;
+    if (error) return <div className="p-8 text-center text-red-500">Error loading trips!</div>;
 
     return (
         <div className="min-h-screen bg-gray-50 p-8">
@@ -105,9 +83,7 @@ export default function Dashboard() {
                     </div>
                 </div>
 
-                {loading ? (
-                    <p className="text-gray-500">Loading your trips...</p>
-                ) : trips.length === 0 ? (
+                {trips.length === 0 ? (
                     <div className="bg-white p-8 rounded-xl shadow-sm border border-gray-100 text-center">
                         <p className="text-gray-600 mb-4">You haven't created any trips yet.</p>
                         <button
@@ -119,7 +95,7 @@ export default function Dashboard() {
                     </div>
                 ) : (
                     <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                        {trips.map(trip => (
+                        {trips.map((trip) => (
                             <div
                                 key={trip.id}
                                 onClick={() => navigate(`/trip/${trip.id}`)}
@@ -201,5 +177,5 @@ export default function Dashboard() {
                 )}
             </div>
         </div>
-    )
+    );
 }

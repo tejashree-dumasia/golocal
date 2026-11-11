@@ -1,3 +1,4 @@
+import { fetchApi } from './utils/apiClient';
 import ChatBox from './ChatBox'
 import { useEffect, useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
@@ -12,7 +13,7 @@ export default function TripDetails() {
     const [loading, setLoading] = useState(true)
     const [isAdding, setIsAdding] = useState(false)
     const [newLocation, setNewLocation] = useState({ name: '', address: '', dayNumber: 1 })
-    
+
     // Invite state
     const [inviteEmail, setInviteEmail] = useState('')
     const [isInviting, setIsInviting] = useState(false)
@@ -21,25 +22,19 @@ export default function TripDetails() {
         const unsubscribe = onAuthStateChanged(auth, async (user) => {
             if (user) {
                 try {
-                    const token = await user.getIdToken()
-                    const response = await fetch(`${import.meta.env.VITE_API_URL}/api/v1/trips/${id}/locations`, {
-                        headers: { 'Authorization': `Bearer ${token}` }
-                    })
-                    const data = await response.json()
-                    if (response.ok) {
-                        setLocations(data.locations)
-                    }
+                    const data = await fetchApi(`/trips/${id}/locations`);
+                    setLocations(data.locations);
                 } catch (error) {
-                    console.error('Failed to fetch locations:', error)
+                    console.error('Failed to fetch locations:', error);
                 } finally {
-                    setLoading(false)
+                    setLoading(false);
                 }
             } else {
                 // If they logged out or session expired, boot them to login
                 navigate('/')
             }
         })
-        
+
         return () => unsubscribe()
     }, [id, navigate])
 
@@ -110,7 +105,7 @@ export default function TripDetails() {
 
                     {/* LEFT COLUMN: Add Place & Invite Forms */}
                     <div className="flex flex-col gap-6 md:col-span-1">
-                        
+
                         {/* Add Place Box */}
                         <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 h-fit">
                             <h2 className="text-xl font-semibold mb-4 text-gray-800">Add a Place</h2>

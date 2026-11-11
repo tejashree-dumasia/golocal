@@ -16,7 +16,7 @@ export default function ChatBox({ tripId }) {
       if (user) {
         try {
           const token = await user.getIdToken()
-          const response = await fetch(`${import.meta.env.VITE_API_URL}/api/v1/trips/${tripId}/messages`, {
+          const response = await fetch(`${import.meta.env.VITE_API_BASE_URL}/trips/${tripId}/messages`, {
             headers: { 'Authorization': `Bearer ${token}` }
           })
           const data = await response.json()
