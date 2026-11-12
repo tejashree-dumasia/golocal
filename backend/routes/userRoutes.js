@@ -2,10 +2,11 @@ import express from 'express';
 import { eq, and, isNull } from 'drizzle-orm';
 import { db, schema } from '../db/index.js';
 import { verifyToken } from '../middleware/auth.js';
+import { validate } from '../middleware/validate.js';
+import { profileUpdateSchema } from '../validations/schemas.js';
 
 const router = express.Router();
 
-// Existing Sync Route
 router.post('/sync', verifyToken, async (req, res) => {
   try {
     const { uid, email, name, picture } = req.user;
@@ -14,7 +15,6 @@ router.post('/sync', verifyToken, async (req, res) => {
     const existingUser = await db.select().from(schema.users).where(eq(schema.users.id, uid));
     let currentUser = existingUser[0];
 
-    // 1. Create user if they don't exist
     if (!currentUser) {
       const newUser = await db.insert(schema.users).values({
         id: uid,
@@ -25,18 +25,16 @@ router.post('/sync', verifyToken, async (req, res) => {
       currentUser = newUser[0];
     }
 
-    // 2. THE MAGIC AUTO-LINK
-    // Find any trip_members rows waiting for this email and attach their new UID
     await db.update(schema.tripMembers)
       .set({
         userId: uid,
-        inviteEmail: null, // Clear this out since they are linked now
-        status: 'accepted' // Auto-accept since they joined via the invite
+        inviteEmail: null,
+        status: 'accepted' 
       })
       .where(
         and(
           eq(schema.tripMembers.inviteEmail, normalizedEmail),
-          isNull(schema.tripMembers.userId) // Only link rows that don't have a user yet
+          isNull(schema.tripMembers.userId) 
         )
       );
 
@@ -47,7 +45,6 @@ router.post('/sync', verifyToken, async (req, res) => {
   }
 });
 
-// NEW: Get Current User Profile
 router.get('/me', verifyToken, async (req, res) => {
   try {
     const user = await db.select().from(schema.users).where(eq(schema.users.id, req.user.uid));
@@ -61,8 +58,8 @@ router.get('/me', verifyToken, async (req, res) => {
   }
 });
 
-// NEW: Update Current User Profile
-router.put('/me', verifyToken, async (req, res) => {
+// UPDATE PROFILE (Added validate)
+router.put('/me', verifyToken, validate(profileUpdateSchema), async (req, res) => {
   try {
     const { name, phone, altPhone, requireApproval } = req.body;
     

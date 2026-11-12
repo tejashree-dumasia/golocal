@@ -1,13 +1,14 @@
 import express from 'express';
 import { sendTripNotification } from '../services/emailService.js';
 import { eq, and, or, arrayContains } from 'drizzle-orm';
+import { validate } from '../middleware/validate.js';
+import { tripSchema, locationSchema, memberInviteSchema } from '../validations/schemas.js';
 import { db, schema } from '../db/index.js';
 import { verifyToken } from '../middleware/auth.js';
 import { v2 as cloudinary } from 'cloudinary';
 import multer from 'multer';
 import { Resend } from 'resend';
 import 'dotenv/config';
-
 
 const router = express.Router();
 const resend = new Resend(process.env.RESEND_API_KEY);
@@ -21,7 +22,8 @@ cloudinary.config({
 const storage = multer.memoryStorage();
 const upload = multer({ storage: storage });
 
-router.post('/', verifyToken, async (req, res) => {
+// CREATE TRIP (Added validate)
+router.post('/', verifyToken, validate(tripSchema), async (req, res) => {
   try {
     const { title, description, budget } = req.body;
     const userId = req.user.uid; 
@@ -70,13 +72,12 @@ router.get('/', verifyToken, async (req, res) => {
   }
 });
 
-// PUT: Edit Trip Details
-router.put('/:tripId', verifyToken, async (req, res) => {
+// EDIT TRIP (Added validate)
+router.put('/:tripId', verifyToken, validate(tripSchema), async (req, res) => {
   try {
     const { title, description, budget } = req.body;
     const { tripId } = req.params;
 
-    // 1. Verify user is host or co-host
     const membership = await db.select().from(schema.tripMembers)
       .where(and(eq(schema.tripMembers.tripId, tripId), eq(schema.tripMembers.userId, req.user.uid)));
 
@@ -84,7 +85,6 @@ router.put('/:tripId', verifyToken, async (req, res) => {
       return res.status(403).json({ error: 'Not authorized to edit this trip' });
     }
 
-    // 2. Update trip
     const updatedTrip = await db.update(schema.trips)
       .set({ 
         title, 
@@ -102,12 +102,10 @@ router.put('/:tripId', verifyToken, async (req, res) => {
   }
 });
 
-// DELETE: Remove Trip Entirely
 router.delete('/:tripId', verifyToken, async (req, res) => {
   try {
     const { tripId } = req.params;
 
-    // 1. Verify user is strictly the HOST
     const membership = await db.select().from(schema.tripMembers)
       .where(and(eq(schema.tripMembers.tripId, tripId), eq(schema.tripMembers.userId, req.user.uid)));
 
@@ -115,7 +113,6 @@ router.delete('/:tripId', verifyToken, async (req, res) => {
       return res.status(403).json({ error: 'Only the host can delete this trip' });
     }
 
-    // 2. Delete all related data safely inside a transaction
     await db.transaction(async (tx) => {
       await tx.delete(schema.tripLocations).where(eq(schema.tripLocations.tripId, tripId));
       await tx.delete(schema.messages).where(eq(schema.messages.tripId, tripId));
@@ -141,7 +138,8 @@ router.get('/:tripId/locations', verifyToken, async (req, res) => {
   }
 });
 
-router.post('/:tripId/locations', verifyToken, async (req, res) => {
+// ADD LOCATION (Added validate)
+router.post('/:tripId/locations', verifyToken, validate(locationSchema), async (req, res) => {
   try {
     const { tripId } = req.params;
     const { name, address, lat, lng, dayNumber, sortOrder } = req.body;
@@ -162,13 +160,12 @@ router.post('/:tripId/locations', verifyToken, async (req, res) => {
     res.status(500).json({ error: 'Failed to add location' });
   }
 });
-// PUT: Bulk Reorder Locations
+
 router.put('/:tripId/locations/reorder', verifyToken, async (req, res) => {
   try {
     const { tripId } = req.params;
-    const { updates } = req.body; // Array of { id, sortOrder, dayNumber }
+    const { updates } = req.body; 
 
-    // 1. Verify user has permission (Host or Co-Host)
     const membership = await db.select().from(schema.tripMembers)
       .where(and(eq(schema.tripMembers.tripId, tripId), eq(schema.tripMembers.userId, req.user.uid)));
 
@@ -176,7 +173,6 @@ router.put('/:tripId/locations/reorder', verifyToken, async (req, res) => {
       return res.status(403).json({ error: 'Not authorized to reorder itinerary' });
     }
 
-    // 2. Execute all updates safely inside a transaction
     await db.transaction(async (tx) => {
       for (const item of updates) {
         await tx.update(schema.tripLocations)
@@ -191,15 +187,13 @@ router.put('/:tripId/locations/reorder', verifyToken, async (req, res) => {
     res.status(500).json({ error: 'Failed to reorder locations' });
   }
 });
-// DELETE LOCATION
+
 router.delete('/:tripId/locations/:locationId', verifyToken, async (req, res) => {
   try {
     const { tripId, locationId } = req.params;
 
     await db.delete(schema.tripLocations)
-      .where(
-        eq(schema.tripLocations.id, locationId)
-      );
+      .where(eq(schema.tripLocations.id, locationId));
 
     res.status(200).json({ message: 'Location deleted successfully' });
   } catch (error) {
@@ -208,7 +202,6 @@ router.delete('/:tripId/locations/:locationId', verifyToken, async (req, res) =>
   }
 });
 
-// NEW: GET MEMBERS
 router.get('/:tripId/members', verifyToken, async (req, res) => {
   try {
     const members = await db
@@ -229,7 +222,6 @@ router.get('/:tripId/members', verifyToken, async (req, res) => {
   }
 });
 
-// UPDATED: GET PHOTOS WITH PRIVACY FILTER
 router.get('/:tripId/photos', verifyToken, async (req, res) => {
   try {
     const userId = req.user.uid;
@@ -253,7 +245,7 @@ router.get('/:tripId/photos', verifyToken, async (req, res) => {
   }
 });
 
-// UPDATED: POST PHOTOS WITH TAGS
+// NOTE: We don't use Zod for the photo upload route because it parses FormData (Multipart), which Zod doesn't handle natively as easily as JSON.
 router.post('/:tripId/photos', verifyToken, upload.single('photo'), async (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ error: 'No image file provided' });
@@ -316,61 +308,51 @@ router.get('/:tripId/messages', verifyToken, async (req, res) => {
   }
 });
 
-
-// ... other routes ...
-
-router.post('/:tripId/invite', verifyToken, async (req, res) => {
+// INVITE MEMBER (Added validate)
+router.post('/:tripId/invite', verifyToken, validate(memberInviteSchema), async (req, res) => {
   try {
-    // The frontend will now send 'name' and an optional 'email'
-    const { name, email, role = 'participant' } = req.body; 
+    const { name, email, role } = req.body; 
     const tripId = req.params.tripId;
     const inviterName = req.user.name;
 
-    // SCENARIO 1: App-less Placeholder (No Email Provided)
     if (!email) {
       const newMember = await db.insert(schema.tripMembers).values({
         tripId,
         displayName: name,
         role,
-        status: 'accepted' // Placeholders don't have apps to accept invites with
+        status: 'accepted'
       }).returning();
       
       return res.status(201).json({ message: 'App-less member added', member: newMember[0] });
     }
 
     const normalizedEmail = email.toLowerCase().trim();
-
-    // Check if the user already has a GoLocal account
     const existingUsers = await db.select().from(schema.users).where(eq(schema.users.email, normalizedEmail));
     const existingUser = existingUsers[0];
 
-    // SCENARIO 2: Existing User (Check Privacy Settings)
     if (existingUser) {
       const requiresApproval = existingUser.requireApproval;
       
       const newMember = await db.insert(schema.tripMembers).values({
         tripId,
         userId: existingUser.id,
-        displayName: existingUser.name, // Override with their actual profile name
+        displayName: existingUser.name, 
         role,
         status: requiresApproval ? 'pending' : 'accepted'
       }).returning();
 
-      // Send the appropriate email based on their privacy settings
       const emailType = requiresApproval ? 'REQUIRES_APPROVAL' : 'AUTO_ADDED';
       await sendTripNotification({ to: normalizedEmail, type: emailType, tripId, inviterName });
 
       return res.status(201).json({ message: 'Existing user processed', member: newMember[0] });
     } 
-    
-    // SCENARIO 3: New User (Prepare for Auto-Link)
     else {
       const newMember = await db.insert(schema.tripMembers).values({
         tripId,
-        inviteEmail: normalizedEmail, // Save email for future linking
+        inviteEmail: normalizedEmail, 
         displayName: name,
         role,
-        status: 'pending' // New users are always pending until they sign up
+        status: 'pending' 
       }).returning();
 
       await sendTripNotification({ to: normalizedEmail, type: 'NEW_USER_INVITE', tripId, inviterName });
