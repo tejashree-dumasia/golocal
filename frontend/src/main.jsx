@@ -1,3 +1,5 @@
+import 'leaflet/dist/leaflet.css'
+// ... rest of your main.jsx imports
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { BrowserRouter } from 'react-router-dom'

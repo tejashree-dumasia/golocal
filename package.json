@@ -1,6 +1,9 @@
 {
   "dependencies": {
+    "@react-google-maps/api": "^2.20.8",
     "cloudinary": "^2.11.0",
-    "multer": "^2.5.0"
+    "leaflet": "^1.9.4",
+    "multer": "^2.5.0",
+    "react-leaflet": "^5.0.0"
   }
 }

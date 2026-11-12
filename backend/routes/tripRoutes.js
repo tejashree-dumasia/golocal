@@ -1,5 +1,5 @@
 import express from 'express';
-import { eq } from 'drizzle-orm';
+import { eq, and, or, arrayContains } from 'drizzle-orm';
 import { db, schema } from '../db/index.js';
 import { verifyToken } from '../middleware/auth.js';
 import { v2 as cloudinary } from 'cloudinary';
@@ -100,9 +100,61 @@ router.post('/:tripId/locations', verifyToken, async (req, res) => {
   }
 });
 
+// DELETE LOCATION
+router.delete('/:tripId/locations/:locationId', verifyToken, async (req, res) => {
+  try {
+    const { tripId, locationId } = req.params;
+
+    await db.delete(schema.tripLocations)
+      .where(
+        eq(schema.tripLocations.id, locationId)
+      );
+
+    res.status(200).json({ message: 'Location deleted successfully' });
+  } catch (error) {
+    console.error('Error deleting location:', error);
+    res.status(500).json({ error: 'Failed to delete location' });
+  }
+});
+
+// NEW: GET MEMBERS
+router.get('/:tripId/members', verifyToken, async (req, res) => {
+  try {
+    const members = await db
+      .select({
+        id: schema.tripMembers.id,
+        userId: schema.tripMembers.userId,
+        displayName: schema.tripMembers.displayName,
+        role: schema.tripMembers.role,
+        status: schema.tripMembers.status
+      })
+      .from(schema.tripMembers)
+      .where(eq(schema.tripMembers.tripId, req.params.tripId));
+      
+    res.status(200).json({ members });
+  } catch (error) {
+    console.error('Error fetching members:', error);
+    res.status(500).json({ error: 'Failed to fetch members' });
+  }
+});
+
+// UPDATED: GET PHOTOS WITH PRIVACY FILTER
 router.get('/:tripId/photos', verifyToken, async (req, res) => {
   try {
-    const tripPhotos = await db.select().from(schema.photos).where(eq(schema.photos.tripId, req.params.tripId));
+    const userId = req.user.uid;
+    
+    const tripPhotos = await db.select().from(schema.photos)
+      .where(
+        and(
+          eq(schema.photos.tripId, req.params.tripId),
+          or(
+            arrayContains(schema.photos.visibility, ['ALL']),
+            arrayContains(schema.photos.visibility, [userId]),
+            eq(schema.photos.uploaderId, userId)
+          )
+        )
+      );
+      
     res.status(200).json({ photos: tripPhotos });
   } catch (error) {
     console.error('Error fetching photos:', error);
@@ -110,9 +162,19 @@ router.get('/:tripId/photos', verifyToken, async (req, res) => {
   }
 });
 
+// UPDATED: POST PHOTOS WITH TAGS
 router.post('/:tripId/photos', verifyToken, upload.single('photo'), async (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ error: 'No image file provided' });
+
+    let visibilityArray = ['ALL'];
+    if (req.body.visibility) {
+       try {
+         visibilityArray = JSON.parse(req.body.visibility);
+       } catch (e) {
+         visibilityArray = req.body.visibility.split(',');
+       }
+    }
 
     const uploadToCloudinary = (buffer) => {
       return new Promise((resolve, reject) => {
@@ -130,7 +192,7 @@ router.post('/:tripId/photos', verifyToken, upload.single('photo'), async (req, 
       tripId: req.params.tripId,
       uploaderId: req.user.uid,
       imageUrl: cloudResult.secure_url,
-      visibility: ['ALL']
+      visibility: visibilityArray
     }).returning();
 
     res.status(201).json({ message: 'Photo uploaded', photo: newPhoto[0] });
