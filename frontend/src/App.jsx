@@ -1,3 +1,4 @@
+import Profile from './Profile'
 import { useState, useEffect } from 'react'
 import { Routes, Route, useNavigate } from 'react-router-dom'
 import { signInWithPopup, onAuthStateChanged, signOut } from 'firebase/auth'
@@ -52,6 +53,7 @@ export default function App() {
 
   return (
     <Routes>
+      <Route path="/profile" element={<Profile />} />
       <Route path="/" element={
         <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4">
           <div className="max-w-md w-full bg-white rounded-xl shadow-lg p-8 text-center">

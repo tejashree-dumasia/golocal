@@ -19,10 +19,15 @@ export default function Dashboard() {
     const [isCreating, setIsCreating] = useState(false);
     const [formData, setFormData] = useState({ title: '', description: '', budget: '' });
 
+    const [currentUser, setCurrentUser] = useState(null);
     // 2. We only need useEffect for Auth redirection now
     useEffect(() => {
         const unsubscribe = onAuthStateChanged(auth, (user) => {
-            if (!user) navigate('/');
+            if (!user) {
+                navigate('/');
+            } else {
+                setCurrentUser(user); // <--- Save user data
+            }
         });
         return () => unsubscribe();
     }, [navigate]);
@@ -48,8 +53,8 @@ export default function Dashboard() {
             });
 
             // Tell React Query to automatically refetch the trips list
-            queryClient.invalidateQueries(['trips']); 
-            
+            queryClient.invalidateQueries(['trips']);
+
             setShowModal(false);
             setFormData({ title: '', description: '', budget: '' });
         } catch (error) {
@@ -67,22 +72,53 @@ export default function Dashboard() {
             <div className="max-w-6xl mx-auto">
                 <div className="flex justify-between items-center mb-8">
                     <h1 className="text-3xl font-bold text-gray-900">Your Trips</h1>
-                    <div className="flex gap-4 items-center">
+
+                    <div className="flex gap-3 sm:gap-4 items-center">
+
+                        {/* 1. Primary Action */}
                         <button
                             onClick={() => setShowModal(true)}
-                            className="bg-indigo-600 text-white px-4 py-2 rounded-lg hover:bg-indigo-700 font-medium transition"
+                            className="bg-indigo-600 text-white px-4 py-2 rounded-lg hover:bg-indigo-700 font-medium transition shadow-sm"
                         >
                             + New Trip
                         </button>
+
+                        <div className="h-8 w-px bg-gray-200 mx-1 hidden sm:block"></div>
+
+                        {/* 2. Clickable Identity Block (Replaces "Profile" button) */}
+                        {currentUser && (
+                            <button
+                                onClick={() => navigate('/profile')}
+                                className="flex items-center gap-2 sm:gap-3 hover:bg-gray-100 p-1.5 sm:pr-4 rounded-full sm:rounded-xl transition group text-left"
+                                title="Profile Settings"
+                            >
+                                {currentUser.photoURL ? (
+                                    <img
+                                        src={currentUser.photoURL}
+                                        alt="Profile"
+                                        className="w-10 h-10 rounded-full object-cover border-2 border-white shadow-sm group-hover:border-indigo-100 transition"
+                                        referrerPolicy="no-referrer"
+                                    />
+                                ) : (
+                                    <div className="w-10 h-10 rounded-full bg-indigo-100 text-indigo-700 flex items-center justify-center font-bold border-2 border-white shadow-sm group-hover:border-indigo-200 transition">
+                                        {currentUser.displayName ? currentUser.displayName.charAt(0).toUpperCase() : '?'}
+                                    </div>
+                                )}
+                                <span className="text-sm font-semibold text-gray-700 hidden sm:block group-hover:text-indigo-600 transition">
+                                    {currentUser.displayName?.split(' ')[0]}
+                                </span>
+                            </button>
+                        )}
+
+                        {/* 3. Sign Out */}
                         <button
                             onClick={handleLogout}
-                            className="text-gray-600 hover:text-gray-900 font-medium"
+                            className="text-red-600 hover:text-red-700 font-medium bg-red-50 hover:bg-red-100 px-3 sm:px-4 py-2 rounded-lg transition text-sm sm:text-base"
                         >
                             Sign Out
                         </button>
                     </div>
                 </div>
-
                 {trips.length === 0 ? (
                     <div className="bg-white p-8 rounded-xl shadow-sm border border-gray-100 text-center">
                         <p className="text-gray-600 mb-4">You haven't created any trips yet.</p>
