@@ -5,6 +5,7 @@ import { fetchApi } from './utils/apiClient'
 import ChatBox from './ChatBox'
 import { auth } from './firebase'
 import { onAuthStateChanged } from 'firebase/auth'
+import { DragDropContext, Droppable, Draggable } from '@hello-pangea/dnd'
 
 const defaultCenter = { lat: 18.5204, lng: 73.8567 } // Default to Pune
 
@@ -39,7 +40,9 @@ export default function TripDetails() {
                         fetchApi(`/trips/${id}/photos`),
                         fetchApi(`/trips/${id}/members`)
                     ])
-                    setLocations(locationsData.locations)
+                    // Sort locations by sortOrder on load
+                    const sortedLocations = locationsData.locations.sort((a, b) => (a.sortOrder || 0) - (b.sortOrder || 0));
+                    setLocations(sortedLocations)
                     setPhotos(photosData.photos)
                     setMembers(membersData.members)
                 } catch (error) {
@@ -128,7 +131,8 @@ export default function TripDetails() {
                     'Authorization': `Bearer ${token}`,
                     'Content-Type': 'application/json'
                 },
-                body: JSON.stringify(newLocation)
+                // Automatically assign the next sortOrder
+                body: JSON.stringify({ ...newLocation, sortOrder: locations.length })
             })
             if (response.ok) {
                 const data = await response.json()
@@ -183,6 +187,33 @@ export default function TripDetails() {
             setIsInviting(false)
         }
     }
+
+    // --- DRAG AND DROP HANDLER ---
+    const handleDragEnd = async (result) => {
+        if (!result.destination) return;
+
+        const items = Array.from(locations);
+        const [reorderedItem] = items.splice(result.source.index, 1);
+        items.splice(result.destination.index, 0, reorderedItem);
+
+        // Instantly update UI 
+        const updatedLocations = items.map((item, index) => ({ ...item, sortOrder: index }));
+        setLocations(updatedLocations);
+
+        // Sync with Backend
+        try {
+            const token = await auth.currentUser.getIdToken();
+            await fetch(`${import.meta.env.VITE_API_BASE_URL}/trips/${id}/locations/reorder`, {
+                method: 'PUT',
+                headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+                body: JSON.stringify({ 
+                    updates: updatedLocations.map(loc => ({ id: loc.id, sortOrder: loc.sortOrder, dayNumber: loc.dayNumber })) 
+                })
+            });
+        } catch (error) {
+            console.error('Failed to save new order:', error);
+        }
+    };
 
     const mapCenter = locations.length > 0 && locations[0].lat
         ? { lat: Number(locations[0].lat), lng: Number(locations[0].lng) }
@@ -246,7 +277,7 @@ export default function TripDetails() {
                             </form>
                         </div>
 
-                        {/* TRIP CREW BOX (NEW) */}
+                        {/* TRIP CREW BOX */}
                         <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 h-fit">
                             <h2 className="text-lg font-semibold mb-4 text-gray-800 flex items-center gap-2">
                                 👥 The Crew
@@ -257,14 +288,14 @@ export default function TripDetails() {
                                         <span className="text-sm font-medium text-gray-700">{member.displayName}</span>
                                         <span className={`text-xs px-2 py-1 rounded-full font-semibold uppercase tracking-wider ${member.role === 'host' ? 'bg-indigo-100 text-indigo-700' : 'bg-gray-200 text-gray-600'
                                             }`}>
-                                            {member.role}
+                                            {member.role.replace('_', ' ')}
                                         </span>
                                     </div>
                                 ))}
                             </div>
                         </div>
 
-                        {/* UPLOAD PHOTOS WITH TAGGING (NEW UI) */}
+                        {/* UPLOAD PHOTOS WITH TAGGING */}
                         <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 h-fit">
                             <h2 className="text-lg font-semibold mb-3 text-gray-800 flex items-center gap-2">
                                 📸 Trip Photos
@@ -298,12 +329,10 @@ export default function TripDetails() {
                         </div>
 
                         {/* INVITE FRIENDS */}
-                        {/* Invite Friends Box */}
                         <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 h-fit">
                             <h2 className="text-lg font-semibold mb-3 text-gray-800 flex items-center gap-2">
                                 ✉️ Add to Crew
                             </h2>
-                            {/* Update State to handle name and email */}
                             <form
                                 onSubmit={(e) => {
                                     e.preventDefault();
@@ -316,7 +345,6 @@ export default function TripDetails() {
                                         .then(() => {
                                             alert('Member added successfully!');
                                             e.target.reset();
-                                            // Optionally refetch members here to update the UI instantly
                                         })
                                         .catch(console.error)
                                         .finally(() => setIsInviting(false));
@@ -361,7 +389,7 @@ export default function TripDetails() {
                             </MapContainer>
                         </div>
 
-                        <h2 className="text-xl font-semibold mb-4 text-gray-800">Your Plan</h2>
+                        <h2 className="text-xl font-semibold mb-4 text-gray-800">Your Plan (Drag to Reorder)</h2>
                         {loading ? (
                             <p className="text-gray-500">Loading places...</p>
                         ) : locations.length === 0 ? (
@@ -369,32 +397,47 @@ export default function TripDetails() {
                                 No places added yet. Start building your itinerary on the left!
                             </div>
                         ) : (
-                            <div className="space-y-4">
-                                {locations
-                                    .sort((a, b) => a.dayNumber - b.dayNumber)
-                                    .map((loc) => (
-                                        <div key={loc.id} className="bg-white p-4 rounded-xl shadow-sm border border-gray-100 flex justify-between items-center hover:shadow-md transition group">
-                                            <div>
-                                                <h3 className="font-bold text-gray-800 text-lg">{loc.name}</h3>
-                                                {loc.address && <p className="text-sm text-gray-500">{loc.address}</p>}
-                                            </div>
-
-                                            <div className="flex items-center gap-3">
-                                                <span className="bg-indigo-50 text-indigo-700 text-sm font-bold px-4 py-1.5 rounded-full border border-indigo-100">
-                                                    Day {loc.dayNumber}
-                                                </span>
-
-                                                <button
-                                                    onClick={() => handleDeleteLocation(loc.id)}
-                                                    className="opacity-0 group-hover:opacity-100 text-red-400 hover:text-red-600 transition-opacity p-2 text-lg"
-                                                    title="Remove Place"
-                                                >
-                                                    🗑️
-                                                </button>
-                                            </div>
+                            <DragDropContext onDragEnd={handleDragEnd}>
+                                <Droppable droppableId="itinerary">
+                                    {(provided) => (
+                                        <div {...provided.droppableProps} ref={provided.innerRef} className="space-y-4">
+                                            {locations.map((loc, index) => (
+                                                <Draggable key={loc.id} draggableId={loc.id} index={index}>
+                                                    {(provided) => (
+                                                        <div 
+                                                            ref={provided.innerRef} 
+                                                            {...provided.draggableProps} 
+                                                            {...provided.dragHandleProps} 
+                                                            className="bg-white p-4 rounded-xl shadow-sm border border-gray-100 flex justify-between items-center hover:shadow-md transition group"
+                                                            style={{ ...provided.draggableProps.style }}
+                                                        >
+                                                            <div className="flex items-center gap-4">
+                                                                <span className="text-gray-400 cursor-grab active:cursor-grabbing">
+                                                                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 8h16M4 16h16" /></svg>
+                                                                </span>
+                                                                <div>
+                                                                    <h3 className="font-bold text-gray-800 text-lg">{loc.name}</h3>
+                                                                    {loc.address && <p className="text-sm text-gray-500">{loc.address}</p>}
+                                                                </div>
+                                                            </div>
+                                                            
+                                                            <div className="flex items-center gap-3">
+                                                                <span className="bg-indigo-50 text-indigo-700 text-sm font-bold px-4 py-1.5 rounded-full border border-indigo-100">
+                                                                    Day {loc.dayNumber}
+                                                                </span>
+                                                                <button onClick={() => handleDeleteLocation(loc.id)} className="opacity-0 group-hover:opacity-100 text-red-400 hover:text-red-600 transition-opacity p-2 text-lg" title="Remove Place">
+                                                                    🗑️
+                                                                </button>
+                                                            </div>
+                                                        </div>
+                                                    )}
+                                                </Draggable>
+                                            ))}
+                                            {provided.placeholder}
                                         </div>
-                                    ))}
-                            </div>
+                                    )}
+                                </Droppable>
+                            </DragDropContext>
                         )}
 
                         <div className="mt-12">

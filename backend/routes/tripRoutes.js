@@ -8,6 +8,7 @@ import multer from 'multer';
 import { Resend } from 'resend';
 import 'dotenv/config';
 
+
 const router = express.Router();
 const resend = new Resend(process.env.RESEND_API_KEY);
 
@@ -69,6 +70,67 @@ router.get('/', verifyToken, async (req, res) => {
   }
 });
 
+// PUT: Edit Trip Details
+router.put('/:tripId', verifyToken, async (req, res) => {
+  try {
+    const { title, description, budget } = req.body;
+    const { tripId } = req.params;
+
+    // 1. Verify user is host or co-host
+    const membership = await db.select().from(schema.tripMembers)
+      .where(and(eq(schema.tripMembers.tripId, tripId), eq(schema.tripMembers.userId, req.user.uid)));
+
+    if (!membership.length || membership[0].role === 'participant') {
+      return res.status(403).json({ error: 'Not authorized to edit this trip' });
+    }
+
+    // 2. Update trip
+    const updatedTrip = await db.update(schema.trips)
+      .set({ 
+        title, 
+        description: description || null, 
+        budget: budget || null, 
+        updatedAt: new Date() 
+      })
+      .where(eq(schema.trips.id, tripId))
+      .returning();
+
+    res.status(200).json({ message: 'Trip updated successfully', trip: updatedTrip[0] });
+  } catch (error) {
+    console.error('Error updating trip:', error);
+    res.status(500).json({ error: 'Failed to update trip' });
+  }
+});
+
+// DELETE: Remove Trip Entirely
+router.delete('/:tripId', verifyToken, async (req, res) => {
+  try {
+    const { tripId } = req.params;
+
+    // 1. Verify user is strictly the HOST
+    const membership = await db.select().from(schema.tripMembers)
+      .where(and(eq(schema.tripMembers.tripId, tripId), eq(schema.tripMembers.userId, req.user.uid)));
+
+    if (!membership.length || membership[0].role !== 'host') {
+      return res.status(403).json({ error: 'Only the host can delete this trip' });
+    }
+
+    // 2. Delete all related data safely inside a transaction
+    await db.transaction(async (tx) => {
+      await tx.delete(schema.tripLocations).where(eq(schema.tripLocations.tripId, tripId));
+      await tx.delete(schema.messages).where(eq(schema.messages.tripId, tripId));
+      await tx.delete(schema.photos).where(eq(schema.photos.tripId, tripId));
+      await tx.delete(schema.tripMembers).where(eq(schema.tripMembers.tripId, tripId));
+      await tx.delete(schema.trips).where(eq(schema.trips.id, tripId));
+    });
+
+    res.status(200).json({ message: 'Trip deleted successfully' });
+  } catch (error) {
+    console.error('Error deleting trip:', error);
+    res.status(500).json({ error: 'Failed to delete trip' });
+  }
+});
+
 router.get('/:tripId/locations', verifyToken, async (req, res) => {
   try {
     const locations = await db.select().from(schema.tripLocations).where(eq(schema.tripLocations.tripId, req.params.tripId));
@@ -100,7 +162,35 @@ router.post('/:tripId/locations', verifyToken, async (req, res) => {
     res.status(500).json({ error: 'Failed to add location' });
   }
 });
+// PUT: Bulk Reorder Locations
+router.put('/:tripId/locations/reorder', verifyToken, async (req, res) => {
+  try {
+    const { tripId } = req.params;
+    const { updates } = req.body; // Array of { id, sortOrder, dayNumber }
 
+    // 1. Verify user has permission (Host or Co-Host)
+    const membership = await db.select().from(schema.tripMembers)
+      .where(and(eq(schema.tripMembers.tripId, tripId), eq(schema.tripMembers.userId, req.user.uid)));
+
+    if (!membership.length || membership[0].role === 'participant') {
+      return res.status(403).json({ error: 'Not authorized to reorder itinerary' });
+    }
+
+    // 2. Execute all updates safely inside a transaction
+    await db.transaction(async (tx) => {
+      for (const item of updates) {
+        await tx.update(schema.tripLocations)
+          .set({ sortOrder: item.sortOrder, dayNumber: item.dayNumber })
+          .where(eq(schema.tripLocations.id, item.id));
+      }
+    });
+
+    res.status(200).json({ message: 'Itinerary reordered successfully' });
+  } catch (error) {
+    console.error('Error reordering locations:', error);
+    res.status(500).json({ error: 'Failed to reorder locations' });
+  }
+});
 // DELETE LOCATION
 router.delete('/:tripId/locations/:locationId', verifyToken, async (req, res) => {
   try {
