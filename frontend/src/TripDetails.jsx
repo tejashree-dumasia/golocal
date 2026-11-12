@@ -9,19 +9,19 @@ import { onAuthStateChanged } from 'firebase/auth'
 const defaultCenter = { lat: 18.5204, lng: 73.8567 } // Default to Pune
 
 export default function TripDetails() {
-    const { id } = useParams() 
+    const { id } = useParams()
     const navigate = useNavigate()
 
     // State Declarations
     const [locations, setLocations] = useState([])
-    const [photos, setPhotos] = useState([]) 
+    const [photos, setPhotos] = useState([])
     const [members, setMembers] = useState([])
     const [selectedTags, setSelectedTags] = useState([]) // Empty means 'ALL'
     const [loading, setLoading] = useState(true)
-    
+
     const [isAdding, setIsAdding] = useState(false)
     const [newLocation, setNewLocation] = useState({ name: '', address: '', lat: null, lng: null, dayNumber: 1 })
-    
+
     const [isUploading, setIsUploading] = useState(false)
     const [inviteEmail, setInviteEmail] = useState('')
     const [isInviting, setIsInviting] = useState(false)
@@ -37,11 +37,11 @@ export default function TripDetails() {
                     const [locationsData, photosData, membersData] = await Promise.all([
                         fetchApi(`/trips/${id}/locations`),
                         fetchApi(`/trips/${id}/photos`),
-                        fetchApi(`/trips/${id}/members`) 
+                        fetchApi(`/trips/${id}/members`)
                     ])
                     setLocations(locationsData.locations)
                     setPhotos(photosData.photos)
-                    setMembers(membersData.members) 
+                    setMembers(membersData.members)
                 } catch (error) {
                     console.error('Failed to fetch trip data:', error)
                 } finally {
@@ -58,7 +58,7 @@ export default function TripDetails() {
     const handleSearch = async (e) => {
         const query = e.target.value
         setSearchQuery(query)
-        
+
         if (query.length > 2) {
             const res = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${query}`)
             const data = await res.json()
@@ -77,16 +77,16 @@ export default function TripDetails() {
             lng: place.lon
         }))
         setSearchQuery(place.display_name)
-        setSearchResults([]) 
+        setSearchResults([])
     }
 
     // --- API HANDLERS ---
-    
+
     // Tag Toggle Helper
     const toggleTag = (userId) => {
         if (!userId) return; // Can't tag placeholder users
-        setSelectedTags(prev => 
-            prev.includes(userId) 
+        setSelectedTags(prev =>
+            prev.includes(userId)
                 ? prev.filter(uid => uid !== userId)
                 : [...prev, userId]
         )
@@ -97,10 +97,10 @@ export default function TripDetails() {
         const file = e.target.files[0]
         if (!file) return
         setIsUploading(true)
-        
+
         const formData = new FormData()
         formData.append('photo', file)
-        
+
         if (selectedTags.length > 0) {
             const validTags = selectedTags.filter(uid => uid !== null);
             formData.append('visibility', JSON.stringify(validTags))
@@ -109,7 +109,7 @@ export default function TripDetails() {
         try {
             const data = await fetchApi(`/trips/${id}/photos`, { method: 'POST', body: formData })
             setPhotos(prev => [...prev, data.photo])
-            setSelectedTags([]) 
+            setSelectedTags([])
         } catch (error) {
             alert('Failed to upload photo')
         } finally {
@@ -133,7 +133,7 @@ export default function TripDetails() {
             if (response.ok) {
                 const data = await response.json()
                 setLocations([...locations, data.location])
-                setNewLocation({ name: '', address: '', lat: null, lng: null, dayNumber: 1 }) 
+                setNewLocation({ name: '', address: '', lat: null, lng: null, dayNumber: 1 })
                 setSearchQuery('')
             }
         } catch (error) {
@@ -184,8 +184,8 @@ export default function TripDetails() {
         }
     }
 
-    const mapCenter = locations.length > 0 && locations[0].lat 
-        ? { lat: Number(locations[0].lat), lng: Number(locations[0].lng) } 
+    const mapCenter = locations.length > 0 && locations[0].lat
+        ? { lat: Number(locations[0].lat), lng: Number(locations[0].lng) }
         : defaultCenter;
 
     return (
@@ -204,17 +204,17 @@ export default function TripDetails() {
 
                     {/* LEFT COLUMN */}
                     <div className="flex flex-col gap-6 md:col-span-1">
-                        
+
                         {/* SEARCH & ADD PLACE */}
                         <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 h-fit">
                             <h2 className="text-xl font-semibold mb-4 text-gray-800">Add a Place</h2>
                             <form onSubmit={handleAddLocation} className="space-y-4">
                                 <div className="relative">
                                     <label className="block text-sm font-medium text-gray-700 mb-1">Search Location</label>
-                                    <input 
-                                        required 
-                                        type="text" 
-                                        placeholder="Search for a place..." 
+                                    <input
+                                        required
+                                        type="text"
+                                        placeholder="Search for a place..."
                                         className="w-full border border-gray-300 rounded-lg p-2 focus:ring-2 focus:ring-indigo-500 outline-none"
                                         value={searchQuery}
                                         onChange={handleSearch}
@@ -222,8 +222,8 @@ export default function TripDetails() {
                                     {searchResults.length > 0 && (
                                         <ul className="absolute z-10 w-full bg-white border border-gray-200 rounded-lg shadow-lg mt-1 max-h-48 overflow-y-auto">
                                             {searchResults.map((result) => (
-                                                <li 
-                                                    key={result.place_id} 
+                                                <li
+                                                    key={result.place_id}
                                                     onClick={() => selectPlace(result)}
                                                     className="p-2 hover:bg-indigo-50 cursor-pointer text-sm border-b last:border-b-0 truncate"
                                                 >
@@ -255,9 +255,8 @@ export default function TripDetails() {
                                 {members.map(member => (
                                     <div key={member.id} className="flex justify-between items-center bg-gray-50 p-2 rounded-lg border border-gray-100">
                                         <span className="text-sm font-medium text-gray-700">{member.displayName}</span>
-                                        <span className={`text-xs px-2 py-1 rounded-full font-semibold uppercase tracking-wider ${
-                                            member.role === 'host' ? 'bg-indigo-100 text-indigo-700' : 'bg-gray-200 text-gray-600'
-                                        }`}>
+                                        <span className={`text-xs px-2 py-1 rounded-full font-semibold uppercase tracking-wider ${member.role === 'host' ? 'bg-indigo-100 text-indigo-700' : 'bg-gray-200 text-gray-600'
+                                            }`}>
                                             {member.role}
                                         </span>
                                     </div>
@@ -270,7 +269,7 @@ export default function TripDetails() {
                             <h2 className="text-lg font-semibold mb-3 text-gray-800 flex items-center gap-2">
                                 📸 Trip Photos
                             </h2>
-                            
+
                             <div className="mb-4">
                                 <label className="block text-sm font-medium text-gray-700 mb-2">Who can see this? (Leave empty for everyone)</label>
                                 <div className="flex flex-wrap gap-2">
@@ -279,11 +278,10 @@ export default function TripDetails() {
                                             key={member.id}
                                             type="button"
                                             onClick={() => toggleTag(member.userId)}
-                                            className={`text-xs px-3 py-1.5 rounded-full border font-medium transition ${
-                                                selectedTags.includes(member.userId)
+                                            className={`text-xs px-3 py-1.5 rounded-full border font-medium transition ${selectedTags.includes(member.userId)
                                                     ? 'bg-indigo-600 text-white border-indigo-600'
                                                     : 'bg-white text-gray-600 border-gray-300 hover:bg-gray-50'
-                                            }`}
+                                                }`}
                                         >
                                             {member.displayName}
                                         </button>
@@ -300,14 +298,41 @@ export default function TripDetails() {
                         </div>
 
                         {/* INVITE FRIENDS */}
+                        {/* Invite Friends Box */}
                         <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 h-fit">
                             <h2 className="text-lg font-semibold mb-3 text-gray-800 flex items-center gap-2">
-                                ✉️ Invite Friends
+                                ✉️ Add to Crew
                             </h2>
-                            <form onSubmit={handleInvite} className="space-y-3">
-                                <input required type="email" placeholder="friend@email.com" className="w-full border border-gray-300 rounded-lg p-2 text-sm focus:ring-2 focus:ring-indigo-500 outline-none" value={inviteEmail} onChange={(e) => setInviteEmail(e.target.value)} />
+                            {/* Update State to handle name and email */}
+                            <form
+                                onSubmit={(e) => {
+                                    e.preventDefault();
+                                    setIsInviting(true);
+                                    const token = auth.currentUser.accessToken;
+                                    fetchApi(`/trips/${id}/invite`, {
+                                        method: 'POST',
+                                        body: JSON.stringify({ name: e.target.memberName.value, email: e.target.memberEmail.value })
+                                    })
+                                        .then(() => {
+                                            alert('Member added successfully!');
+                                            e.target.reset();
+                                            // Optionally refetch members here to update the UI instantly
+                                        })
+                                        .catch(console.error)
+                                        .finally(() => setIsInviting(false));
+                                }}
+                                className="space-y-3"
+                            >
+                                <div>
+                                    <label className="block text-xs font-medium text-gray-700 mb-1">Name (Required)</label>
+                                    <input required name="memberName" type="text" placeholder="John Doe" className="w-full border border-gray-300 rounded-lg p-2 text-sm focus:ring-2 focus:ring-indigo-500 outline-none" />
+                                </div>
+                                <div>
+                                    <label className="block text-xs font-medium text-gray-700 mb-1">Email (Optional)</label>
+                                    <input name="memberEmail" type="email" placeholder="friend@email.com (Leave blank for app-less)" className="w-full border border-gray-300 rounded-lg p-2 text-sm focus:ring-2 focus:ring-indigo-500 outline-none" />
+                                </div>
                                 <button type="submit" disabled={isInviting} className="w-full bg-green-50 text-green-700 border border-green-200 py-2 rounded-lg text-sm font-bold hover:bg-green-100 disabled:opacity-50 transition">
-                                    {isInviting ? 'Sending...' : 'Send Invite'}
+                                    {isInviting ? 'Adding...' : 'Add Member'}
                                 </button>
                             </form>
                         </div>
@@ -315,11 +340,11 @@ export default function TripDetails() {
 
                     {/* MIDDLE COLUMN */}
                     <div className="md:col-span-2">
-                        
+
                         <div className="mb-8 bg-white p-2 rounded-2xl shadow-sm border border-gray-100 z-0">
-                            <MapContainer 
-                                center={[mapCenter.lat, mapCenter.lng]} 
-                                zoom={locations.length > 0 ? 10 : 5} 
+                            <MapContainer
+                                center={[mapCenter.lat, mapCenter.lng]}
+                                zoom={locations.length > 0 ? 10 : 5}
                                 style={{ height: '400px', width: '100%', borderRadius: '0.75rem', zIndex: 0 }}
                             >
                                 <TileLayer
@@ -336,7 +361,7 @@ export default function TripDetails() {
                             </MapContainer>
                         </div>
 
-                      <h2 className="text-xl font-semibold mb-4 text-gray-800">Your Plan</h2>
+                        <h2 className="text-xl font-semibold mb-4 text-gray-800">Your Plan</h2>
                         {loading ? (
                             <p className="text-gray-500">Loading places...</p>
                         ) : locations.length === 0 ? (
@@ -346,20 +371,20 @@ export default function TripDetails() {
                         ) : (
                             <div className="space-y-4">
                                 {locations
-                                    .sort((a, b) => a.dayNumber - b.dayNumber) 
+                                    .sort((a, b) => a.dayNumber - b.dayNumber)
                                     .map((loc) => (
                                         <div key={loc.id} className="bg-white p-4 rounded-xl shadow-sm border border-gray-100 flex justify-between items-center hover:shadow-md transition group">
                                             <div>
                                                 <h3 className="font-bold text-gray-800 text-lg">{loc.name}</h3>
                                                 {loc.address && <p className="text-sm text-gray-500">{loc.address}</p>}
                                             </div>
-                                            
+
                                             <div className="flex items-center gap-3">
                                                 <span className="bg-indigo-50 text-indigo-700 text-sm font-bold px-4 py-1.5 rounded-full border border-indigo-100">
                                                     Day {loc.dayNumber}
                                                 </span>
-                                                
-                                                <button 
+
+                                                <button
                                                     onClick={() => handleDeleteLocation(loc.id)}
                                                     className="opacity-0 group-hover:opacity-100 text-red-400 hover:text-red-600 transition-opacity p-2 text-lg"
                                                     title="Remove Place"
@@ -382,9 +407,9 @@ export default function TripDetails() {
                                 <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
                                     {photos.map((photo) => (
                                         <div key={photo.id} className="aspect-square rounded-xl overflow-hidden shadow-sm border border-gray-200 bg-gray-100">
-                                            <img 
-                                                src={photo.imageUrl} 
-                                                alt="Trip Memory" 
+                                            <img
+                                                src={photo.imageUrl}
+                                                alt="Trip Memory"
                                                 className="w-full h-full object-cover hover:scale-105 transition-transform duration-300"
                                                 loading="lazy"
                                             />
@@ -400,8 +425,8 @@ export default function TripDetails() {
                         <ChatBox tripId={id} />
                     </div>
 
-                </div> 
-            </div> 
+                </div>
+            </div>
         </div>
     )
 }

@@ -1,4 +1,5 @@
 import express from 'express';
+import { sendTripNotification } from '../services/emailService.js';
 import { eq, and, or, arrayContains } from 'drizzle-orm';
 import { db, schema } from '../db/index.js';
 import { verifyToken } from '../middleware/auth.js';
@@ -225,27 +226,70 @@ router.get('/:tripId/messages', verifyToken, async (req, res) => {
   }
 });
 
+
+// ... other routes ...
+
 router.post('/:tripId/invite', verifyToken, async (req, res) => {
   try {
-    const { email } = req.body;
-    const { data, error } = await resend.emails.send({
-      from: 'GoLocal <invite@tejashreedumasia.me>', 
-      to: email, 
-      subject: 'You have been invited to a GoLocal trip!',
-      html: `
-        <h2>Pack your bags! 🎒</h2>
-        <p>Your friend has invited you to collaborate on a trip itinerary.</p>
-        <a href="http://localhost:5173/trip/${req.params.tripId}" style="display:inline-block; padding:10px 20px; background-color:#4f46e5; color:white; text-decoration:none; border-radius:5px;">
-          Open Trip Workspace
-        </a>
-      `
-    });
+    // The frontend will now send 'name' and an optional 'email'
+    const { name, email, role = 'participant' } = req.body; 
+    const tripId = req.params.tripId;
+    const inviterName = req.user.name;
 
-    if (error) return res.status(400).json({ error });
-    res.status(200).json({ message: 'Invite sent successfully', data });
+    // SCENARIO 1: App-less Placeholder (No Email Provided)
+    if (!email) {
+      const newMember = await db.insert(schema.tripMembers).values({
+        tripId,
+        displayName: name,
+        role,
+        status: 'accepted' // Placeholders don't have apps to accept invites with
+      }).returning();
+      
+      return res.status(201).json({ message: 'App-less member added', member: newMember[0] });
+    }
+
+    const normalizedEmail = email.toLowerCase().trim();
+
+    // Check if the user already has a GoLocal account
+    const existingUsers = await db.select().from(schema.users).where(eq(schema.users.email, normalizedEmail));
+    const existingUser = existingUsers[0];
+
+    // SCENARIO 2: Existing User (Check Privacy Settings)
+    if (existingUser) {
+      const requiresApproval = existingUser.requireApproval;
+      
+      const newMember = await db.insert(schema.tripMembers).values({
+        tripId,
+        userId: existingUser.id,
+        displayName: existingUser.name, // Override with their actual profile name
+        role,
+        status: requiresApproval ? 'pending' : 'accepted'
+      }).returning();
+
+      // Send the appropriate email based on their privacy settings
+      const emailType = requiresApproval ? 'REQUIRES_APPROVAL' : 'AUTO_ADDED';
+      await sendTripNotification({ to: normalizedEmail, type: emailType, tripId, inviterName });
+
+      return res.status(201).json({ message: 'Existing user processed', member: newMember[0] });
+    } 
+    
+    // SCENARIO 3: New User (Prepare for Auto-Link)
+    else {
+      const newMember = await db.insert(schema.tripMembers).values({
+        tripId,
+        inviteEmail: normalizedEmail, // Save email for future linking
+        displayName: name,
+        role,
+        status: 'pending' // New users are always pending until they sign up
+      }).returning();
+
+      await sendTripNotification({ to: normalizedEmail, type: 'NEW_USER_INVITE', tripId, inviterName });
+      
+      return res.status(201).json({ message: 'Invite sent to new user', member: newMember[0] });
+    }
   } catch (error) {
-    console.error('Error sending invite:', error);
-    res.status(500).json({ error: 'Failed to send invite' });
+    console.error('Error processing member logic:', error);
+    res.status(500).json({ error: 'Failed to process trip member' });
   }
 });
 
