@@ -1,14 +1,16 @@
-import Profile from './Profile'
 import { useState, useEffect } from 'react'
 import { Routes, Route, useNavigate } from 'react-router-dom'
 import { signInWithPopup, onAuthStateChanged, signOut } from 'firebase/auth'
 import { auth, googleProvider } from './firebase'
+
+import Layout from './Layout'
 import Dashboard from './Dashboard'
 import TripDetails from './TripDetails'
+import Profile from './Profile'
 
 export default function App() {
   const [loading, setLoading] = useState(false)
-  const [error, setError] = useState('') // New state for UI errors
+  const [error, setError] = useState('') 
   const navigate = useNavigate()
 
   useEffect(() => {
@@ -53,7 +55,7 @@ export default function App() {
 
   return (
     <Routes>
-      <Route path="/profile" element={<Profile />} />
+      {/* Unauthenticated Login Route */}
       <Route path="/" element={
         <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4">
           <div className="max-w-md w-full bg-white rounded-xl shadow-lg p-8 text-center">
@@ -77,8 +79,13 @@ export default function App() {
           </div>
         </div>
       } />
-      <Route path="/dashboard" element={<Dashboard />} />
-      <Route path="/trip/:id" element={<TripDetails />} />
+
+      {/* Authenticated Routes wrapped in the Global Layout */}
+      <Route element={<Layout />}>
+        <Route path="/dashboard" element={<Dashboard />} />
+        <Route path="/trip/:id" element={<TripDetails />} />
+        <Route path="/profile" element={<Profile />} />
+      </Route>
     </Routes>
   )
 }

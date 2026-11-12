@@ -1,6 +1,4 @@
-import { useState, useEffect } from 'react';
-import { auth } from './firebase';
-import { signOut, onAuthStateChanged } from 'firebase/auth';
+import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useTrips } from './hooks/useTrips';
 import { fetchApi } from './utils/apiClient';
@@ -13,26 +11,11 @@ export default function Dashboard() {
     const { data, isLoading, error } = useTrips();
     const trips = data?.trips || [];
 
-    const [currentUser, setCurrentUser] = useState(null); 
-    
     // Modal & Form State
     const [showModal, setShowModal] = useState(false);
     const [isSaving, setIsSaving] = useState(false);
     const [editingTripId, setEditingTripId] = useState(null);
     const [formData, setFormData] = useState({ title: '', description: '', budget: '' });
-
-    useEffect(() => {
-        const unsubscribe = onAuthStateChanged(auth, (user) => {
-            if (!user) navigate('/');
-            else setCurrentUser(user);
-        });
-        return () => unsubscribe();
-    }, [navigate]);
-
-    const handleLogout = async () => {
-        await signOut(auth);
-        navigate('/');
-    };
 
     // Open Modal for New Trip
     const openCreateModal = () => {
@@ -101,35 +84,14 @@ export default function Dashboard() {
     if (error) return <div className="p-8 text-center text-red-500">Error loading trips!</div>;
 
     return (
-        <div className="min-h-screen bg-gray-50 p-8">
+        <div className="p-8">
             <div className="max-w-6xl mx-auto">
                 <div className="flex justify-between items-center mb-8">
                     <h1 className="text-3xl font-bold text-gray-900">Your Trips</h1>
                     
-                    <div className="flex gap-3 sm:gap-4 items-center">
-                        <button onClick={openCreateModal} className="bg-indigo-600 text-white px-4 py-2 rounded-lg hover:bg-indigo-700 font-medium transition shadow-sm">
-                            + New Trip
-                        </button>
-                        <div className="h-8 w-px bg-gray-200 mx-1 hidden sm:block"></div>
-
-                        {currentUser && (
-                            <button onClick={() => navigate('/profile')} className="flex items-center gap-2 sm:gap-3 hover:bg-gray-100 p-1.5 sm:pr-4 rounded-full sm:rounded-xl transition group text-left" title="Profile Settings">
-                                {currentUser.photoURL ? (
-                                    <img src={currentUser.photoURL} alt="Profile" className="w-10 h-10 rounded-full object-cover border-2 border-white shadow-sm group-hover:border-indigo-100 transition" referrerPolicy="no-referrer" />
-                                ) : (
-                                    <div className="w-10 h-10 rounded-full bg-indigo-100 text-indigo-700 flex items-center justify-center font-bold border-2 border-white shadow-sm group-hover:border-indigo-200 transition">
-                                        {currentUser.displayName ? currentUser.displayName.charAt(0).toUpperCase() : '?'}
-                                    </div>
-                                )}
-                                <span className="text-sm font-semibold text-gray-700 hidden sm:block group-hover:text-indigo-600 transition">
-                                    {currentUser.displayName?.split(' ')[0]} 
-                                </span>
-                            </button>
-                        )}
-                        <button onClick={handleLogout} className="text-red-600 hover:text-red-700 font-medium bg-red-50 hover:bg-red-100 px-3 sm:px-4 py-2 rounded-lg transition text-sm sm:text-base">
-                            Sign Out
-                        </button>
-                    </div>
+                    <button onClick={openCreateModal} className="bg-indigo-600 text-white px-4 py-2 rounded-lg hover:bg-indigo-700 font-medium transition shadow-sm">
+                        + New Trip
+                    </button>
                 </div>
 
                 {trips.length === 0 ? (
