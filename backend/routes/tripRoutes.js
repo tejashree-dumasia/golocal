@@ -22,7 +22,7 @@ cloudinary.config({
 const storage = multer.memoryStorage();
 const upload = multer({ storage: storage });
 
-// CREATE TRIP (Added validate)
+// CREATE TRIP
 router.post('/', verifyToken, validate(tripSchema), async (req, res) => {
   try {
     const { title, description, budget } = req.body;
@@ -72,7 +72,7 @@ router.get('/', verifyToken, async (req, res) => {
   }
 });
 
-// EDIT TRIP (Added validate)
+// EDIT TRIP
 router.put('/:tripId', verifyToken, validate(tripSchema), async (req, res) => {
   try {
     const { title, description, budget } = req.body;
@@ -138,7 +138,7 @@ router.get('/:tripId/locations', verifyToken, async (req, res) => {
   }
 });
 
-// ADD LOCATION (Added validate)
+// ADD LOCATION
 router.post('/:tripId/locations', verifyToken, validate(locationSchema), async (req, res) => {
   try {
     const { tripId } = req.params;
@@ -213,7 +213,8 @@ router.get('/:tripId/members', verifyToken, async (req, res) => {
         status: schema.tripMembers.status
       })
       .from(schema.tripMembers)
-      .where(eq(schema.tripMembers.tripId, req.params.tripId));
+      .where(eq(schema.tripMembers.tripId, req.params.tripId))
+      .orderBy(schema.tripMembers.createdAt); // Added sorting to keep host at top
       
     res.status(200).json({ members });
   } catch (error) {
@@ -245,7 +246,6 @@ router.get('/:tripId/photos', verifyToken, async (req, res) => {
   }
 });
 
-// NOTE: We don't use Zod for the photo upload route because it parses FormData (Multipart), which Zod doesn't handle natively as easily as JSON.
 router.post('/:tripId/photos', verifyToken, upload.single('photo'), async (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ error: 'No image file provided' });
@@ -308,18 +308,25 @@ router.get('/:tripId/messages', verifyToken, async (req, res) => {
   }
 });
 
-// INVITE MEMBER (Added validate)
+// INVITE MEMBER
 router.post('/:tripId/invite', verifyToken, validate(memberInviteSchema), async (req, res) => {
   try {
     const { name, email, role } = req.body; 
     const tripId = req.params.tripId;
     const inviterName = req.user.name;
 
+    // --- ENFORCE 2ND PERSON CO_HOST RULE ---
+    const currentMembers = await db.select().from(schema.tripMembers).where(eq(schema.tripMembers.tripId, tripId));
+    let assignedRole = role || 'participant';
+    if (currentMembers.length === 1 && assignedRole === 'participant') {
+        assignedRole = 'co_host';
+    }
+
     if (!email) {
       const newMember = await db.insert(schema.tripMembers).values({
         tripId,
         displayName: name,
-        role,
+        role: assignedRole,
         status: 'accepted'
       }).returning();
       
@@ -337,7 +344,7 @@ router.post('/:tripId/invite', verifyToken, validate(memberInviteSchema), async 
         tripId,
         userId: existingUser.id,
         displayName: existingUser.name, 
-        role,
+        role: assignedRole,
         status: requiresApproval ? 'pending' : 'accepted'
       }).returning();
 
@@ -351,7 +358,7 @@ router.post('/:tripId/invite', verifyToken, validate(memberInviteSchema), async 
         tripId,
         inviteEmail: normalizedEmail, 
         displayName: name,
-        role,
+        role: assignedRole,
         status: 'pending' 
       }).returning();
 
@@ -363,6 +370,82 @@ router.post('/:tripId/invite', verifyToken, validate(memberInviteSchema), async 
     console.error('Error processing member logic:', error);
     res.status(500).json({ error: 'Failed to process trip member' });
   }
+});
+
+// UPDATE MEMBER ROLE (Atomic Swapping)
+router.put('/:tripId/members/:memberId/role', verifyToken, async (req, res) => {
+    try {
+        const { tripId, memberId } = req.params;
+        const { role } = req.body; 
+  
+        // 1. Verify requester is the HOST
+        const requester = await db.select().from(schema.tripMembers)
+            .where(and(eq(schema.tripMembers.tripId, tripId), eq(schema.tripMembers.userId, req.user.uid)));
+  
+        if (!requester.length || requester[0].role !== 'host') {
+            return res.status(403).json({ error: 'Only the host can change roles' });
+        }
+  
+        // 2. Prevent changing own role directly via this route
+        if (requester[0].id === memberId) {
+            return res.status(400).json({ error: 'Cannot edit yourself' });
+        }
+  
+        // 3. ATOMIC TRANSACTION: Enforce strictly 1 Host, 1 Co-Host
+        await db.transaction(async (tx) => {
+            if (role === 'host') {
+                // Demote ALL current co_hosts to participant
+                await tx.update(schema.tripMembers).set({ role: 'participant' })
+                    .where(and(eq(schema.tripMembers.tripId, tripId), eq(schema.tripMembers.role, 'co_host')));
+                
+                // Demote current host to co_host
+                await tx.update(schema.tripMembers).set({ role: 'co_host' })
+                    .where(eq(schema.tripMembers.id, requester[0].id));
+                
+                // Promote new host
+                await tx.update(schema.tripMembers).set({ role: 'host' })
+                    .where(eq(schema.tripMembers.id, memberId));
+                    
+            } else if (role === 'co_host') {
+                // Demote existing co_host to participant
+                await tx.update(schema.tripMembers).set({ role: 'participant' })
+                    .where(and(eq(schema.tripMembers.tripId, tripId), eq(schema.tripMembers.role, 'co_host')));
+                
+                // Promote new co_host
+                await tx.update(schema.tripMembers).set({ role: 'co_host' })
+                    .where(eq(schema.tripMembers.id, memberId));
+            } else {
+                // Just demote target to participant
+                await tx.update(schema.tripMembers).set({ role: 'participant' })
+                    .where(eq(schema.tripMembers.id, memberId));
+            }
+        });
+  
+        res.status(200).json({ message: 'Role updated successfully' });
+    } catch (error) {
+        console.error('Error updating role:', error);
+        res.status(500).json({ error: 'Failed to update role' });
+    }
+});
+
+// REMOVE MEMBER
+router.delete('/:tripId/members/:memberId', verifyToken, async (req, res) => {
+    try {
+        const { tripId, memberId } = req.params;
+  
+        const requester = await db.select().from(schema.tripMembers)
+            .where(and(eq(schema.tripMembers.tripId, tripId), eq(schema.tripMembers.userId, req.user.uid)));
+  
+        if (!requester.length || requester[0].role !== 'host') {
+            return res.status(403).json({ error: 'Only the host can remove members' });
+        }
+  
+        await db.delete(schema.tripMembers).where(eq(schema.tripMembers.id, memberId));
+        res.status(200).json({ message: 'Member removed' });
+    } catch (error) {
+        console.error('Error removing member:', error);
+        res.status(500).json({ error: 'Failed to remove member' });
+    }
 });
 
 export default router;

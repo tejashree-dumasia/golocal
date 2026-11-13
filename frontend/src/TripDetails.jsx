@@ -1,5 +1,5 @@
 import { MapContainer, TileLayer, Marker, Popup, useMapEvents, Polyline } from 'react-leaflet'
-import L from 'leaflet' // NEW: Required for custom numbered map icons
+import L from 'leaflet'
 import { useEffect, useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { fetchApi } from './utils/apiClient'
@@ -8,22 +8,19 @@ import { auth } from './firebase'
 import { onAuthStateChanged } from 'firebase/auth'
 import { DragDropContext, Droppable, Draggable } from '@hello-pangea/dnd'
 
-const defaultCenter = { lat: 18.5204, lng: 73.8567 } // Default to Pune
+const defaultCenter = { lat: 18.5204, lng: 73.8567 }
 
-// --- NEW: CUSTOM ROUTE MARKER GENERATOR ---
 const createNumberedIcon = (number) => {
     return L.divIcon({
-        className: 'custom-marker', // Removes default Leaflet styling
+        className: 'custom-marker',
         html: `<div style="background-color: #4f46e5; color: white; border-radius: 50%; width: 28px; height: 28px; display: flex; align-items: center; justify-content: center; font-weight: bold; border: 2px solid white; box-shadow: 0 2px 4px rgba(0,0,0,0.3); font-size: 14px;">
                 ${number}
                </div>`,
         iconSize: [28, 28],
-        iconAnchor: [14, 14], // Centers the icon perfectly over the coordinate
+        iconAnchor: [14, 14],
     });
 };
 
-// --- MAP EVENT CAPTURE COMPONENT ---
-// This invisible component hooks into the map instance to capture click events
 function MapInteractionHandler({ onMapClick }) {
     useMapEvents({
         click: (e) => {
@@ -37,15 +34,17 @@ export default function TripDetails() {
     const { id } = useParams()
     const navigate = useNavigate()
 
-    // State Declarations
     const [locations, setLocations] = useState([])
     const [photos, setPhotos] = useState([])
     const [members, setMembers] = useState([])
-    const [selectedTags, setSelectedTags] = useState([]) // Empty means 'ALL'
+    const [selectedTags, setSelectedTags] = useState([]) 
     const [loading, setLoading] = useState(true)
 
-    // --- Map Interaction States ---
-    const [draftLocation, setDraftLocation] = useState(null) // Holds the temporary pin coordinates
+    // --- NEW: Member Management State ---
+    const [openMemberMenu, setOpenMemberMenu] = useState(null); 
+    const isHost = members.find(m => m.userId === auth.currentUser?.uid)?.role === 'host';
+
+    const [draftLocation, setDraftLocation] = useState(null) 
     const [isFetchingAddress, setIsFetchingAddress] = useState(false)
 
     const [isAdding, setIsAdding] = useState(false)
@@ -58,7 +57,6 @@ export default function TripDetails() {
     const [searchQuery, setSearchQuery] = useState('')
     const [searchResults, setSearchResults] = useState([])
 
-    // Initial Data Fetch
     useEffect(() => {
         const unsubscribe = onAuthStateChanged(auth, async (user) => {
             if (user) {
@@ -68,7 +66,6 @@ export default function TripDetails() {
                         fetchApi(`/trips/${id}/photos`),
                         fetchApi(`/trips/${id}/members`)
                     ])
-                    // Sort locations by sortOrder on load
                     const sortedLocations = locationsData.locations.sort((a, b) => (a.sortOrder || 0) - (b.sortOrder || 0));
                     setLocations(sortedLocations)
                     setPhotos(photosData.photos)
@@ -85,21 +82,63 @@ export default function TripDetails() {
         return () => unsubscribe()
     }, [id, navigate])
 
-    // --- MAP CLICK / REVERSE GEOCODING ---
+    // --- NEW: MEMBER MANAGEMENT API HANDLERS ---
+    const handleRoleChange = async (memberId, newRole) => {
+        setOpenMemberMenu(null);
+        try {
+            const token = await auth.currentUser.getIdToken();
+            const response = await fetch(`${import.meta.env.VITE_API_BASE_URL}/trips/${id}/members/${memberId}/role`, {
+                method: 'PUT',
+                headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+                body: JSON.stringify({ role: newRole })
+            });
+            
+            if (response.ok) {
+                // Fetch members again so UI reorganizes accurately based on backend transaction
+                const membersData = await fetchApi(`/trips/${id}/members`);
+                setMembers(membersData.members);
+            } else {
+                const err = await response.json();
+                alert(err.error || 'Failed to update role');
+            }
+        } catch (error) {
+            console.error('Error changing role:', error);
+        }
+    }
+
+    const handleRemoveMember = async (memberId) => {
+        setOpenMemberMenu(null);
+        if (!window.confirm('Are you sure you want to remove this member?')) return;
+        
+        try {
+            const token = await auth.currentUser.getIdToken();
+            const response = await fetch(`${import.meta.env.VITE_API_BASE_URL}/trips/${id}/members/${memberId}`, {
+                method: 'DELETE',
+                headers: { 'Authorization': `Bearer ${token}` }
+            });
+            
+            if (response.ok) {
+                setMembers(prev => prev.filter(m => m.id !== memberId));
+            } else {
+                const err = await response.json();
+                alert(err.error || 'Failed to remove member');
+            }
+        } catch (error) {
+            console.error('Error removing member:', error);
+        }
+    }
+
     const handleMapClick = async (latlng) => {
         const { lat, lng } = latlng;
         
-        // 1. Instantly show a draft pin on the map & switch form mode
         setDraftLocation({ lat, lng });
         setIsFetchingAddress(true);
         setNewLocation(prev => ({ ...prev, lat, lng, name: 'Dropped Pin', address: 'Fetching location data...' }));
 
-        // 2. Reverse Geocode to get readable address via Nominatim
         try {
             const res = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}`);
             const data = await res.json();
             
-            // Extract the most sensible name
             const address = data.display_name;
             const customName = data.name || (address ? address.split(',')[0] : 'Custom Map Pin');
 
@@ -112,7 +151,6 @@ export default function TripDetails() {
         }
     };
 
-    // --- SEARCH HANDLERS ---
     const handleSearch = async (e) => {
         const query = e.target.value
         setSearchQuery(query)
@@ -130,7 +168,6 @@ export default function TripDetails() {
         const lat = parseFloat(place.lat);
         const lng = parseFloat(place.lon);
         
-        // Ensure selecting from search ALSO puts a draft pin on the map
         setDraftLocation({ lat, lng }); 
         
         setNewLocation(prev => ({
@@ -144,7 +181,6 @@ export default function TripDetails() {
         setSearchResults([])
     }
 
-    // --- UTILS ---
     const clearDraftSelection = () => {
         setDraftLocation(null);
         setNewLocation({ name: '', address: '', lat: null, lng: null, dayNumber: 1 });
@@ -152,11 +188,8 @@ export default function TripDetails() {
         setSearchResults([]);
     }
 
-    // --- API HANDLERS ---
-
-    // Tag Toggle Helper
     const toggleTag = (userId) => {
-        if (!userId) return; // Can't tag placeholder users
+        if (!userId) return; 
         setSelectedTags(prev =>
             prev.includes(userId)
                 ? prev.filter(uid => uid !== userId)
@@ -164,7 +197,6 @@ export default function TripDetails() {
         )
     }
 
-    // Updated Photo Upload with Tags
     const handlePhotoUpload = async (e) => {
         const file = e.target.files[0]
         if (!file) return
@@ -200,13 +232,12 @@ export default function TripDetails() {
                     'Authorization': `Bearer ${token}`,
                     'Content-Type': 'application/json'
                 },
-                // Automatically assign the next sortOrder
                 body: JSON.stringify({ ...newLocation, sortOrder: locations.length })
             })
             if (response.ok) {
                 const data = await response.json()
                 setLocations([...locations, data.location])
-                clearDraftSelection() // Reset UI after saving
+                clearDraftSelection()
             }
         } catch (error) {
             console.error('Failed to add location:', error)
@@ -243,11 +274,15 @@ export default function TripDetails() {
             const response = await fetch(`${import.meta.env.VITE_API_BASE_URL}/trips/${id}/invite`, {
                 method: 'POST',
                 headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
-                body: JSON.stringify({ email: inviteEmail })
+                body: JSON.stringify({ name: e.target.memberName.value, email: e.target.memberEmail.value })
             })
             if (response.ok) {
-                alert('Invite sent successfully!')
+                // Refresh members to instantly show the new person
+                const membersData = await fetchApi(`/trips/${id}/members`);
+                setMembers(membersData.members);
                 setInviteEmail('')
+                e.target.reset();
+                alert('Member added successfully!')
             }
         } catch (error) {
             console.error('Error:', error)
@@ -256,7 +291,6 @@ export default function TripDetails() {
         }
     }
 
-    // --- DRAG AND DROP HANDLER ---
     const handleDragEnd = async (result) => {
         if (!result.destination) return;
 
@@ -264,11 +298,9 @@ export default function TripDetails() {
         const [reorderedItem] = items.splice(result.source.index, 1);
         items.splice(result.destination.index, 0, reorderedItem);
 
-        // Instantly update UI 
         const updatedLocations = items.map((item, index) => ({ ...item, sortOrder: index }));
         setLocations(updatedLocations);
 
-        // Sync with Backend
         try {
             const token = await auth.currentUser.getIdToken();
             await fetch(`${import.meta.env.VITE_API_BASE_URL}/trips/${id}/locations/reorder`, {
@@ -283,14 +315,12 @@ export default function TripDetails() {
         }
     };
 
-    // Make map center reactive to drafts
     const mapCenter = draftLocation 
         ? { lat: draftLocation.lat, lng: draftLocation.lng }
         : locations.length > 0 && locations[0].lat
             ? { lat: Number(locations[0].lat), lng: Number(locations[0].lng) }
             : defaultCenter;
 
-    // --- NEW: Calculate Route / Polyline Coords ---
     const validLocations = locations.filter(loc => loc.lat && loc.lng);
     const polylineCoords = validLocations.map(loc => [Number(loc.lat), Number(loc.lng)]);
 
@@ -311,14 +341,11 @@ export default function TripDetails() {
                     {/* LEFT COLUMN */}
                     <div className="flex flex-col gap-6 md:col-span-1">
 
-                        {/* SEARCH & ADD PLACE */}
                         <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 h-fit">
                             <h2 className="text-xl font-semibold mb-4 text-gray-800">Add a Place</h2>
                             <p className="text-xs text-gray-500 mb-4">Search below or click anywhere on the map to drop a pin.</p>
                             
                             <form onSubmit={handleAddLocation} className="space-y-4">
-                                
-                                {/* Dynamic Input (Search OR Draft details) */}
                                 {newLocation.lat ? (
                                     <div className="bg-indigo-50 border border-indigo-200 rounded-lg p-4 relative group transition-all">
                                         <button 
@@ -380,25 +407,67 @@ export default function TripDetails() {
                             </form>
                         </div>
 
-                        {/* TRIP CREW BOX */}
+                        {/* TRIP CREW BOX (Upgraded with Role Management) */}
                         <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 h-fit">
                             <h2 className="text-lg font-semibold mb-4 text-gray-800 flex items-center gap-2">
                                 👥 The Crew
                             </h2>
                             <div className="space-y-3">
                                 {members.map(member => (
-                                    <div key={member.id} className="flex justify-between items-center bg-gray-50 p-2 rounded-lg border border-gray-100">
-                                        <span className="text-sm font-medium text-gray-700">{member.displayName}</span>
-                                        <span className={`text-xs px-2 py-1 rounded-full font-semibold uppercase tracking-wider ${member.role === 'host' ? 'bg-indigo-100 text-indigo-700' : 'bg-gray-200 text-gray-600'
+                                    <div key={member.id} className="flex justify-between items-center bg-gray-50 p-2 rounded-lg border border-gray-200 relative">
+                                        <span className="text-sm font-medium text-gray-700 pl-1">{member.displayName}</span>
+                                        
+                                        <div className="flex items-center gap-2">
+                                            <span className={`text-xs px-2 py-1 rounded-md font-semibold uppercase tracking-wider ${
+                                                member.role === 'host' ? 'bg-indigo-100 text-indigo-700 border border-indigo-200' :
+                                                member.role === 'co_host' ? 'bg-purple-100 text-purple-700 border border-purple-200' : 
+                                                'bg-gray-200 text-gray-600'
                                             }`}>
-                                            {member.role.replace('_', ' ')}
-                                        </span>
+                                                {member.role.replace('_', ' ')}
+                                            </span>
+                                            
+                                            {/* Settings Gear: Only visible if you are the host, and it's not yourself */}
+                                            {isHost && member.userId !== auth.currentUser?.uid && (
+                                                <div className="relative">
+                                                    <button 
+                                                        onClick={() => setOpenMemberMenu(openMemberMenu === member.id ? null : member.id)}
+                                                        className="p-1 text-gray-400 hover:bg-gray-200 hover:text-gray-800 rounded-md transition"
+                                                    >
+                                                        ⚙️
+                                                    </button>
+                                                    
+                                                    {/* Dropdown Menu */}
+                                                    {openMemberMenu === member.id && (
+                                                        <div className="absolute right-0 top-full mt-1 w-44 bg-white border border-gray-200 rounded-lg shadow-xl z-50 overflow-hidden">
+                                                            {member.role !== 'host' && (
+                                                                <button onClick={() => handleRoleChange(member.id, 'host')} className="w-full text-left px-4 py-2.5 text-sm font-medium text-gray-700 hover:bg-indigo-50 hover:text-indigo-700">
+                                                                    Make Host
+                                                                </button>
+                                                            )}
+                                                            {member.role !== 'co_host' && (
+                                                                <button onClick={() => handleRoleChange(member.id, 'co_host')} className="w-full text-left px-4 py-2.5 text-sm font-medium text-gray-700 hover:bg-indigo-50 hover:text-indigo-700">
+                                                                    Make Co-Host
+                                                                </button>
+                                                            )}
+                                                            {member.role !== 'participant' && (
+                                                                <button onClick={() => handleRoleChange(member.id, 'participant')} className="w-full text-left px-4 py-2.5 text-sm font-medium text-gray-700 hover:bg-indigo-50 hover:text-indigo-700">
+                                                                    Make Participant
+                                                                </button>
+                                                            )}
+                                                            <div className="border-t border-gray-100"></div>
+                                                            <button onClick={() => handleRemoveMember(member.id)} className="w-full text-left px-4 py-2.5 text-sm font-medium text-red-600 hover:bg-red-50">
+                                                                Remove Member
+                                                            </button>
+                                                        </div>
+                                                    )}
+                                                </div>
+                                            )}
+                                        </div>
                                     </div>
                                 ))}
                             </div>
                         </div>
 
-                        {/* UPLOAD PHOTOS WITH TAGGING */}
                         <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 h-fit">
                             <h2 className="text-lg font-semibold mb-3 text-gray-800 flex items-center gap-2">
                                 📸 Trip Photos
@@ -431,36 +500,18 @@ export default function TripDetails() {
                             </label>
                         </div>
 
-                        {/* INVITE FRIENDS */}
                         <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 h-fit">
                             <h2 className="text-lg font-semibold mb-3 text-gray-800 flex items-center gap-2">
                                 ✉️ Add to Crew
                             </h2>
-                            <form
-                                onSubmit={(e) => {
-                                    e.preventDefault();
-                                    setIsInviting(true);
-                                    const token = auth.currentUser.accessToken;
-                                    fetchApi(`/trips/${id}/invite`, {
-                                        method: 'POST',
-                                        body: JSON.stringify({ name: e.target.memberName.value, email: e.target.memberEmail.value })
-                                    })
-                                        .then(() => {
-                                            alert('Member added successfully!');
-                                            e.target.reset();
-                                        })
-                                        .catch(console.error)
-                                        .finally(() => setIsInviting(false));
-                                }}
-                                className="space-y-3"
-                            >
+                            <form onSubmit={handleInvite} className="space-y-3">
                                 <div>
                                     <label className="block text-xs font-medium text-gray-700 mb-1">Name (Required)</label>
                                     <input required name="memberName" type="text" placeholder="John Doe" className="w-full border border-gray-300 rounded-lg p-2 text-sm focus:ring-2 focus:ring-indigo-500 outline-none" />
                                 </div>
                                 <div>
                                     <label className="block text-xs font-medium text-gray-700 mb-1">Email (Optional)</label>
-                                    <input name="memberEmail" type="email" placeholder="friend@email.com (Leave blank for app-less)" className="w-full border border-gray-300 rounded-lg p-2 text-sm focus:ring-2 focus:ring-indigo-500 outline-none" />
+                                    <input name="memberEmail" type="email" placeholder="friend@email.com" className="w-full border border-gray-300 rounded-lg p-2 text-sm focus:ring-2 focus:ring-indigo-500 outline-none" />
                                 </div>
                                 <button type="submit" disabled={isInviting} className="w-full bg-green-50 text-green-700 border border-green-200 py-2 rounded-lg text-sm font-bold hover:bg-green-100 disabled:opacity-50 transition">
                                     {isInviting ? 'Adding...' : 'Add Member'}
@@ -483,15 +534,13 @@ export default function TripDetails() {
                                     attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
                                 />
                                 
-                                {/* Map Click Listener inside the MapContainer */}
                                 <MapInteractionHandler onMapClick={handleMapClick} />
 
-                                {/* NEW: Draw the route connecting the locations */}
                                 {polylineCoords.length > 1 && (
                                     <Polyline 
                                         positions={polylineCoords} 
                                         pathOptions={{ 
-                                            color: '#4f46e5', // indigo-600
+                                            color: '#4f46e5',
                                             weight: 4, 
                                             dashArray: '10, 10', 
                                             lineJoin: 'round'
@@ -499,7 +548,6 @@ export default function TripDetails() {
                                     />
                                 )}
 
-                                {/* NEW: Saved Locations now use Numbered Icons */}
                                 {validLocations.map((loc, index) => (
                                     <Marker 
                                         key={loc.id} 
@@ -512,7 +560,6 @@ export default function TripDetails() {
                                     </Marker>
                                 ))}
 
-                                {/* Draft Marker for visual feedback */}
                                 {draftLocation && (
                                     <Marker position={[draftLocation.lat, draftLocation.lng]}>
                                         <Popup autoPan>
@@ -553,7 +600,6 @@ export default function TripDetails() {
                                                                     <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 8h16M4 16h16" /></svg>
                                                                 </span>
                                                                 
-                                                                {/* NEW: Number badge to match map marker */}
                                                                 <div className="bg-indigo-100 text-indigo-700 w-8 h-8 rounded-full flex items-center justify-center font-bold text-sm shrink-0">
                                                                     {index + 1}
                                                                 </div>
