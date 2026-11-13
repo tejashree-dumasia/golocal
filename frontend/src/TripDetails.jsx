@@ -1,4 +1,5 @@
-import { MapContainer, TileLayer, Marker, Popup, useMapEvents } from 'react-leaflet'
+import { MapContainer, TileLayer, Marker, Popup, useMapEvents, Polyline } from 'react-leaflet'
+import L from 'leaflet' // NEW: Required for custom numbered map icons
 import { useEffect, useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { fetchApi } from './utils/apiClient'
@@ -9,7 +10,19 @@ import { DragDropContext, Droppable, Draggable } from '@hello-pangea/dnd'
 
 const defaultCenter = { lat: 18.5204, lng: 73.8567 } // Default to Pune
 
-// --- NEW: MAP EVENT CAPTURE COMPONENT ---
+// --- NEW: CUSTOM ROUTE MARKER GENERATOR ---
+const createNumberedIcon = (number) => {
+    return L.divIcon({
+        className: 'custom-marker', // Removes default Leaflet styling
+        html: `<div style="background-color: #4f46e5; color: white; border-radius: 50%; width: 28px; height: 28px; display: flex; align-items: center; justify-content: center; font-weight: bold; border: 2px solid white; box-shadow: 0 2px 4px rgba(0,0,0,0.3); font-size: 14px;">
+                ${number}
+               </div>`,
+        iconSize: [28, 28],
+        iconAnchor: [14, 14], // Centers the icon perfectly over the coordinate
+    });
+};
+
+// --- MAP EVENT CAPTURE COMPONENT ---
 // This invisible component hooks into the map instance to capture click events
 function MapInteractionHandler({ onMapClick }) {
     useMapEvents({
@@ -31,7 +44,7 @@ export default function TripDetails() {
     const [selectedTags, setSelectedTags] = useState([]) // Empty means 'ALL'
     const [loading, setLoading] = useState(true)
 
-    // --- NEW: Map Interaction States ---
+    // --- Map Interaction States ---
     const [draftLocation, setDraftLocation] = useState(null) // Holds the temporary pin coordinates
     const [isFetchingAddress, setIsFetchingAddress] = useState(false)
 
@@ -72,7 +85,7 @@ export default function TripDetails() {
         return () => unsubscribe()
     }, [id, navigate])
 
-    // --- NEW: MAP CLICK / REVERSE GEOCODING ---
+    // --- MAP CLICK / REVERSE GEOCODING ---
     const handleMapClick = async (latlng) => {
         const { lat, lng } = latlng;
         
@@ -131,7 +144,7 @@ export default function TripDetails() {
         setSearchResults([])
     }
 
-    // --- NEW: UTILS ---
+    // --- UTILS ---
     const clearDraftSelection = () => {
         setDraftLocation(null);
         setNewLocation({ name: '', address: '', lat: null, lng: null, dayNumber: 1 });
@@ -193,7 +206,7 @@ export default function TripDetails() {
             if (response.ok) {
                 const data = await response.json()
                 setLocations([...locations, data.location])
-                clearDraftSelection() // NEW: Reset UI after saving
+                clearDraftSelection() // Reset UI after saving
             }
         } catch (error) {
             console.error('Failed to add location:', error)
@@ -270,12 +283,16 @@ export default function TripDetails() {
         }
     };
 
-    // NEW: Make map center reactive to drafts
+    // Make map center reactive to drafts
     const mapCenter = draftLocation 
         ? { lat: draftLocation.lat, lng: draftLocation.lng }
         : locations.length > 0 && locations[0].lat
             ? { lat: Number(locations[0].lat), lng: Number(locations[0].lng) }
             : defaultCenter;
+
+    // --- NEW: Calculate Route / Polyline Coords ---
+    const validLocations = locations.filter(loc => loc.lat && loc.lng);
+    const polylineCoords = validLocations.map(loc => [Number(loc.lat), Number(loc.lng)]);
 
     return (
         <div className="min-h-screen bg-gray-50 p-8">
@@ -297,12 +314,11 @@ export default function TripDetails() {
                         {/* SEARCH & ADD PLACE */}
                         <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 h-fit">
                             <h2 className="text-xl font-semibold mb-4 text-gray-800">Add a Place</h2>
-                            {/* NEW: Helper Text */}
                             <p className="text-xs text-gray-500 mb-4">Search below or click anywhere on the map to drop a pin.</p>
                             
                             <form onSubmit={handleAddLocation} className="space-y-4">
                                 
-                                {/* NEW: Dynamic Input (Search OR Draft details) */}
+                                {/* Dynamic Input (Search OR Draft details) */}
                                 {newLocation.lat ? (
                                     <div className="bg-indigo-50 border border-indigo-200 rounded-lg p-4 relative group transition-all">
                                         <button 
@@ -467,18 +483,36 @@ export default function TripDetails() {
                                     attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
                                 />
                                 
-                                {/* NEW: Map Click Listener inside the MapContainer */}
+                                {/* Map Click Listener inside the MapContainer */}
                                 <MapInteractionHandler onMapClick={handleMapClick} />
 
-                                {locations.map(loc => loc.lat && loc.lng ? (
-                                    <Marker key={loc.id} position={[Number(loc.lat), Number(loc.lng)]}>
+                                {/* NEW: Draw the route connecting the locations */}
+                                {polylineCoords.length > 1 && (
+                                    <Polyline 
+                                        positions={polylineCoords} 
+                                        pathOptions={{ 
+                                            color: '#4f46e5', // indigo-600
+                                            weight: 4, 
+                                            dashArray: '10, 10', 
+                                            lineJoin: 'round'
+                                        }} 
+                                    />
+                                )}
+
+                                {/* NEW: Saved Locations now use Numbered Icons */}
+                                {validLocations.map((loc, index) => (
+                                    <Marker 
+                                        key={loc.id} 
+                                        position={[Number(loc.lat), Number(loc.lng)]}
+                                        icon={createNumberedIcon(index + 1)}
+                                    >
                                         <Popup>
-                                            <strong>Day {loc.dayNumber}:</strong> {loc.name}
+                                            <strong>Stop {index + 1} (Day {loc.dayNumber}):</strong> {loc.name}
                                         </Popup>
                                     </Marker>
-                                ) : null)}
+                                ))}
 
-                                {/* NEW: Draft Marker for visual feedback */}
+                                {/* Draft Marker for visual feedback */}
                                 {draftLocation && (
                                     <Marker position={[draftLocation.lat, draftLocation.lng]}>
                                         <Popup autoPan>
@@ -518,6 +552,12 @@ export default function TripDetails() {
                                                                 <span className="text-gray-400 cursor-grab active:cursor-grabbing">
                                                                     <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 8h16M4 16h16" /></svg>
                                                                 </span>
+                                                                
+                                                                {/* NEW: Number badge to match map marker */}
+                                                                <div className="bg-indigo-100 text-indigo-700 w-8 h-8 rounded-full flex items-center justify-center font-bold text-sm shrink-0">
+                                                                    {index + 1}
+                                                                </div>
+
                                                                 <div>
                                                                     <h3 className="font-bold text-gray-800 text-lg">{loc.name}</h3>
                                                                     {loc.address && <p className="text-sm text-gray-500">{loc.address}</p>}
@@ -525,7 +565,7 @@ export default function TripDetails() {
                                                             </div>
                                                             
                                                             <div className="flex items-center gap-3">
-                                                                <span className="bg-indigo-50 text-indigo-700 text-sm font-bold px-4 py-1.5 rounded-full border border-indigo-100">
+                                                                <span className="bg-gray-100 text-gray-700 text-sm font-semibold px-4 py-1.5 rounded-full border border-gray-200">
                                                                     Day {loc.dayNumber}
                                                                 </span>
                                                                 <button onClick={() => handleDeleteLocation(loc.id)} className="opacity-0 group-hover:opacity-100 text-red-400 hover:text-red-600 transition-opacity p-2 text-lg" title="Remove Place">
