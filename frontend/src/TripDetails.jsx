@@ -1,4 +1,4 @@
-import { MapContainer, TileLayer, Marker, Popup } from 'react-leaflet'
+import { MapContainer, TileLayer, Marker, Popup, useMapEvents } from 'react-leaflet'
 import { useEffect, useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { fetchApi } from './utils/apiClient'
@@ -8,6 +8,17 @@ import { onAuthStateChanged } from 'firebase/auth'
 import { DragDropContext, Droppable, Draggable } from '@hello-pangea/dnd'
 
 const defaultCenter = { lat: 18.5204, lng: 73.8567 } // Default to Pune
+
+// --- NEW: MAP EVENT CAPTURE COMPONENT ---
+// This invisible component hooks into the map instance to capture click events
+function MapInteractionHandler({ onMapClick }) {
+    useMapEvents({
+        click: (e) => {
+            onMapClick(e.latlng);
+        },
+    });
+    return null;
+}
 
 export default function TripDetails() {
     const { id } = useParams()
@@ -19,6 +30,10 @@ export default function TripDetails() {
     const [members, setMembers] = useState([])
     const [selectedTags, setSelectedTags] = useState([]) // Empty means 'ALL'
     const [loading, setLoading] = useState(true)
+
+    // --- NEW: Map Interaction States ---
+    const [draftLocation, setDraftLocation] = useState(null) // Holds the temporary pin coordinates
+    const [isFetchingAddress, setIsFetchingAddress] = useState(false)
 
     const [isAdding, setIsAdding] = useState(false)
     const [newLocation, setNewLocation] = useState({ name: '', address: '', lat: null, lng: null, dayNumber: 1 })
@@ -57,6 +72,33 @@ export default function TripDetails() {
         return () => unsubscribe()
     }, [id, navigate])
 
+    // --- NEW: MAP CLICK / REVERSE GEOCODING ---
+    const handleMapClick = async (latlng) => {
+        const { lat, lng } = latlng;
+        
+        // 1. Instantly show a draft pin on the map & switch form mode
+        setDraftLocation({ lat, lng });
+        setIsFetchingAddress(true);
+        setNewLocation(prev => ({ ...prev, lat, lng, name: 'Dropped Pin', address: 'Fetching location data...' }));
+
+        // 2. Reverse Geocode to get readable address via Nominatim
+        try {
+            const res = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}`);
+            const data = await res.json();
+            
+            // Extract the most sensible name
+            const address = data.display_name;
+            const customName = data.name || (address ? address.split(',')[0] : 'Custom Map Pin');
+
+            setNewLocation(prev => ({ ...prev, name: customName, address }));
+        } catch (error) {
+            console.error("Reverse geocoding failed", error);
+            setNewLocation(prev => ({ ...prev, name: 'Custom Map Pin', address: 'Coordinates selected' }));
+        } finally {
+            setIsFetchingAddress(false);
+        }
+    };
+
     // --- SEARCH HANDLERS ---
     const handleSearch = async (e) => {
         const query = e.target.value
@@ -72,15 +114,29 @@ export default function TripDetails() {
     }
 
     const selectPlace = (place) => {
+        const lat = parseFloat(place.lat);
+        const lng = parseFloat(place.lon);
+        
+        // Ensure selecting from search ALSO puts a draft pin on the map
+        setDraftLocation({ lat, lng }); 
+        
         setNewLocation(prev => ({
             ...prev,
             name: place.name || place.display_name.split(',')[0],
             address: place.display_name,
-            lat: place.lat,
-            lng: place.lon
+            lat,
+            lng
         }))
-        setSearchQuery(place.display_name)
+        setSearchQuery('')
         setSearchResults([])
+    }
+
+    // --- NEW: UTILS ---
+    const clearDraftSelection = () => {
+        setDraftLocation(null);
+        setNewLocation({ name: '', address: '', lat: null, lng: null, dayNumber: 1 });
+        setSearchQuery('');
+        setSearchResults([]);
     }
 
     // --- API HANDLERS ---
@@ -137,8 +193,7 @@ export default function TripDetails() {
             if (response.ok) {
                 const data = await response.json()
                 setLocations([...locations, data.location])
-                setNewLocation({ name: '', address: '', lat: null, lng: null, dayNumber: 1 })
-                setSearchQuery('')
+                clearDraftSelection() // NEW: Reset UI after saving
             }
         } catch (error) {
             console.error('Failed to add location:', error)
@@ -215,9 +270,12 @@ export default function TripDetails() {
         }
     };
 
-    const mapCenter = locations.length > 0 && locations[0].lat
-        ? { lat: Number(locations[0].lat), lng: Number(locations[0].lng) }
-        : defaultCenter;
+    // NEW: Make map center reactive to drafts
+    const mapCenter = draftLocation 
+        ? { lat: draftLocation.lat, lng: draftLocation.lng }
+        : locations.length > 0 && locations[0].lat
+            ? { lat: Number(locations[0].lat), lng: Number(locations[0].lng) }
+            : defaultCenter;
 
     return (
         <div className="min-h-screen bg-gray-50 p-8">
@@ -239,41 +297,70 @@ export default function TripDetails() {
                         {/* SEARCH & ADD PLACE */}
                         <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 h-fit">
                             <h2 className="text-xl font-semibold mb-4 text-gray-800">Add a Place</h2>
+                            {/* NEW: Helper Text */}
+                            <p className="text-xs text-gray-500 mb-4">Search below or click anywhere on the map to drop a pin.</p>
+                            
                             <form onSubmit={handleAddLocation} className="space-y-4">
-                                <div className="relative">
-                                    <label className="block text-sm font-medium text-gray-700 mb-1">Search Location</label>
-                                    <input
-                                        required
-                                        type="text"
-                                        placeholder="Search for a place..."
-                                        className="w-full border border-gray-300 rounded-lg p-2 focus:ring-2 focus:ring-indigo-500 outline-none"
-                                        value={searchQuery}
-                                        onChange={handleSearch}
-                                    />
-                                    {searchResults.length > 0 && (
-                                        <ul className="absolute z-10 w-full bg-white border border-gray-200 rounded-lg shadow-lg mt-1 max-h-48 overflow-y-auto">
-                                            {searchResults.map((result) => (
-                                                <li
-                                                    key={result.place_id}
-                                                    onClick={() => selectPlace(result)}
-                                                    className="p-2 hover:bg-indigo-50 cursor-pointer text-sm border-b last:border-b-0 truncate"
-                                                >
-                                                    {result.display_name}
-                                                </li>
-                                            ))}
-                                        </ul>
-                                    )}
-                                </div>
+                                
+                                {/* NEW: Dynamic Input (Search OR Draft details) */}
+                                {newLocation.lat ? (
+                                    <div className="bg-indigo-50 border border-indigo-200 rounded-lg p-4 relative group transition-all">
+                                        <button 
+                                            type="button" 
+                                            onClick={clearDraftSelection} 
+                                            className="absolute top-2 right-2 text-indigo-400 hover:text-indigo-700 bg-indigo-100 hover:bg-indigo-200 rounded-full w-6 h-6 flex items-center justify-center transition"
+                                            title="Clear Selection"
+                                        >
+                                            ✕
+                                        </button>
+                                        <label className="block text-xs font-bold text-indigo-700 mb-1 uppercase tracking-wide">
+                                            📍 Selected Location
+                                        </label>
+                                        <input
+                                            required
+                                            type="text"
+                                            value={newLocation.name}
+                                            onChange={(e) => setNewLocation({ ...newLocation, name: e.target.value })}
+                                            className="w-full bg-white border border-indigo-200 rounded-md p-2 text-sm font-semibold text-gray-800 focus:ring-2 focus:ring-indigo-500 outline-none"
+                                            placeholder="Enter a custom name..."
+                                        />
+                                        <p className="text-xs text-indigo-500 mt-2 line-clamp-2" title={newLocation.address}>
+                                            {isFetchingAddress ? 'Fetching details...' : newLocation.address}
+                                        </p>
+                                    </div>
+                                ) : (
+                                    <div className="relative">
+                                        <label className="block text-sm font-medium text-gray-700 mb-1">Search Location</label>
+                                        <input
+                                            type="text"
+                                            placeholder="Search for a place..."
+                                            className="w-full border border-gray-300 rounded-lg p-2 focus:ring-2 focus:ring-indigo-500 outline-none"
+                                            value={searchQuery}
+                                            onChange={handleSearch}
+                                        />
+                                        {searchResults.length > 0 && (
+                                            <ul className="absolute z-10 w-full bg-white border border-gray-200 rounded-lg shadow-lg mt-1 max-h-48 overflow-y-auto">
+                                                {searchResults.map((result) => (
+                                                    <li
+                                                        key={result.place_id}
+                                                        onClick={() => selectPlace(result)}
+                                                        className="p-2 hover:bg-indigo-50 cursor-pointer text-sm border-b last:border-b-0 truncate"
+                                                    >
+                                                        {result.display_name}
+                                                    </li>
+                                                ))}
+                                            </ul>
+                                        )}
+                                    </div>
+                                )}
+
                                 <div>
                                     <label className="block text-sm font-medium text-gray-700 mb-1">Day Number</label>
                                     <input type="number" min="1" className="w-full border border-gray-300 rounded-lg p-2 focus:ring-2 focus:ring-indigo-500 outline-none" value={newLocation.dayNumber} onChange={(e) => setNewLocation({ ...newLocation, dayNumber: Number(e.target.value) })} />
                                 </div>
                                 <button type="submit" disabled={isAdding || !newLocation.lat} className="w-full bg-indigo-600 text-white py-2 rounded-lg font-medium hover:bg-indigo-700 disabled:opacity-50 transition">
-                                    {isAdding ? 'Adding...' : 'Add Place'}
+                                    {isAdding ? 'Saving...' : 'Add Place'}
                                 </button>
-                                {!newLocation.lat && searchQuery && searchResults.length === 0 && (
-                                    <p className="text-xs text-red-500 mt-1">Please select a valid place from the dropdown.</p>
-                                )}
                             </form>
                         </div>
 
@@ -372,13 +459,17 @@ export default function TripDetails() {
                         <div className="mb-8 bg-white p-2 rounded-2xl shadow-sm border border-gray-100 z-0">
                             <MapContainer
                                 center={[mapCenter.lat, mapCenter.lng]}
-                                zoom={locations.length > 0 ? 10 : 5}
+                                zoom={locations.length > 0 || draftLocation ? 10 : 5}
                                 style={{ height: '400px', width: '100%', borderRadius: '0.75rem', zIndex: 0 }}
                             >
                                 <TileLayer
                                     url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
                                     attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
                                 />
+                                
+                                {/* NEW: Map Click Listener inside the MapContainer */}
+                                <MapInteractionHandler onMapClick={handleMapClick} />
+
                                 {locations.map(loc => loc.lat && loc.lng ? (
                                     <Marker key={loc.id} position={[Number(loc.lat), Number(loc.lng)]}>
                                         <Popup>
@@ -386,6 +477,18 @@ export default function TripDetails() {
                                         </Popup>
                                     </Marker>
                                 ) : null)}
+
+                                {/* NEW: Draft Marker for visual feedback */}
+                                {draftLocation && (
+                                    <Marker position={[draftLocation.lat, draftLocation.lng]}>
+                                        <Popup autoPan>
+                                            <div className="text-center">
+                                                <strong className="text-indigo-600 block mb-1">📍 Selected Location</strong>
+                                                <span className="text-xs text-gray-600 block">Edit details on the left sidebar to save it.</span>
+                                            </div>
+                                        </Popup>
+                                    </Marker>
+                                )}
                             </MapContainer>
                         </div>
 
