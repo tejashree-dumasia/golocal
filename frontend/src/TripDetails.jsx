@@ -8,7 +8,7 @@ import { auth } from './firebase'
 import { onAuthStateChanged } from 'firebase/auth'
 import { DragDropContext, Droppable, Draggable } from '@hello-pangea/dnd'
 
-const defaultCenter = { lat: 18.5204, lng: 73.8567 }
+const defaultCenter = { lat: 18.5204, lng: 73.8567 } 
 
 const createNumberedIcon = (number) => {
     return L.divIcon({
@@ -22,11 +22,7 @@ const createNumberedIcon = (number) => {
 };
 
 function MapInteractionHandler({ onMapClick }) {
-    useMapEvents({
-        click: (e) => {
-            onMapClick(e.latlng);
-        },
-    });
+    useMapEvents({ click: (e) => { onMapClick(e.latlng); } });
     return null;
 }
 
@@ -40,17 +36,20 @@ export default function TripDetails() {
     const [selectedTags, setSelectedTags] = useState([]) 
     const [loading, setLoading] = useState(true)
 
-    // --- NEW: Member Management State ---
     const [openMemberMenu, setOpenMemberMenu] = useState(null); 
-    const isHost = members.find(m => m.userId === auth.currentUser?.uid)?.role === 'host';
+    const isHost = members.find(m => m.userId === auth.currentUser?.uid)?.role === 'host' || 
+                   members.find(m => m.userId === auth.currentUser?.uid)?.role === 'co_host';
 
     const [draftLocation, setDraftLocation] = useState(null) 
     const [isFetchingAddress, setIsFetchingAddress] = useState(false)
-
     const [isAdding, setIsAdding] = useState(false)
     const [newLocation, setNewLocation] = useState({ name: '', address: '', lat: null, lng: null, dayNumber: 1 })
 
+    // --- NEW: Photo Lightbox State ---
     const [isUploading, setIsUploading] = useState(false)
+    const [selectedPhoto, setSelectedPhoto] = useState(null); // The photo opened in the modal
+    const [modalTags, setModalTags] = useState([]); // Temporary state for editing tags
+
     const [inviteEmail, setInviteEmail] = useState('')
     const [isInviting, setIsInviting] = useState(false)
 
@@ -82,7 +81,7 @@ export default function TripDetails() {
         return () => unsubscribe()
     }, [id, navigate])
 
-    // --- NEW: MEMBER MANAGEMENT API HANDLERS ---
+    // --- MEMBER MANAGEMENT API HANDLERS ---
     const handleRoleChange = async (memberId, newRole) => {
         setOpenMemberMenu(null);
         try {
@@ -92,90 +91,67 @@ export default function TripDetails() {
                 headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
                 body: JSON.stringify({ role: newRole })
             });
-            
             if (response.ok) {
-                // Fetch members again so UI reorganizes accurately based on backend transaction
                 const membersData = await fetchApi(`/trips/${id}/members`);
                 setMembers(membersData.members);
             } else {
                 const err = await response.json();
                 alert(err.error || 'Failed to update role');
             }
-        } catch (error) {
-            console.error('Error changing role:', error);
-        }
+        } catch (error) { console.error('Error changing role:', error); }
     }
 
     const handleRemoveMember = async (memberId) => {
         setOpenMemberMenu(null);
         if (!window.confirm('Are you sure you want to remove this member?')) return;
-        
         try {
             const token = await auth.currentUser.getIdToken();
             const response = await fetch(`${import.meta.env.VITE_API_BASE_URL}/trips/${id}/members/${memberId}`, {
                 method: 'DELETE',
                 headers: { 'Authorization': `Bearer ${token}` }
             });
-            
             if (response.ok) {
                 setMembers(prev => prev.filter(m => m.id !== memberId));
             } else {
                 const err = await response.json();
                 alert(err.error || 'Failed to remove member');
             }
-        } catch (error) {
-            console.error('Error removing member:', error);
-        }
+        } catch (error) { console.error('Error removing member:', error); }
     }
 
+    // --- MAP & LOCATIONS ---
     const handleMapClick = async (latlng) => {
         const { lat, lng } = latlng;
-        
         setDraftLocation({ lat, lng });
         setIsFetchingAddress(true);
         setNewLocation(prev => ({ ...prev, lat, lng, name: 'Dropped Pin', address: 'Fetching location data...' }));
-
         try {
             const res = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}`);
             const data = await res.json();
-            
             const address = data.display_name;
             const customName = data.name || (address ? address.split(',')[0] : 'Custom Map Pin');
-
             setNewLocation(prev => ({ ...prev, name: customName, address }));
         } catch (error) {
-            console.error("Reverse geocoding failed", error);
             setNewLocation(prev => ({ ...prev, name: 'Custom Map Pin', address: 'Coordinates selected' }));
-        } finally {
-            setIsFetchingAddress(false);
-        }
+        } finally { setIsFetchingAddress(false); }
     };
 
     const handleSearch = async (e) => {
         const query = e.target.value
         setSearchQuery(query)
-
         if (query.length > 2) {
             const res = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${query}`)
             const data = await res.json()
             setSearchResults(data)
-        } else {
-            setSearchResults([])
-        }
+        } else { setSearchResults([]) }
     }
 
     const selectPlace = (place) => {
         const lat = parseFloat(place.lat);
         const lng = parseFloat(place.lon);
-        
         setDraftLocation({ lat, lng }); 
-        
         setNewLocation(prev => ({
-            ...prev,
-            name: place.name || place.display_name.split(',')[0],
-            address: place.display_name,
-            lat,
-            lng
+            ...prev, name: place.name || place.display_name.split(',')[0], address: place.display_name, lat, lng
         }))
         setSearchQuery('')
         setSearchResults([])
@@ -188,39 +164,6 @@ export default function TripDetails() {
         setSearchResults([]);
     }
 
-    const toggleTag = (userId) => {
-        if (!userId) return; 
-        setSelectedTags(prev =>
-            prev.includes(userId)
-                ? prev.filter(uid => uid !== userId)
-                : [...prev, userId]
-        )
-    }
-
-    const handlePhotoUpload = async (e) => {
-        const file = e.target.files[0]
-        if (!file) return
-        setIsUploading(true)
-
-        const formData = new FormData()
-        formData.append('photo', file)
-
-        if (selectedTags.length > 0) {
-            const validTags = selectedTags.filter(uid => uid !== null);
-            formData.append('visibility', JSON.stringify(validTags))
-        }
-
-        try {
-            const data = await fetchApi(`/trips/${id}/photos`, { method: 'POST', body: formData })
-            setPhotos(prev => [...prev, data.photo])
-            setSelectedTags([])
-        } catch (error) {
-            alert('Failed to upload photo')
-        } finally {
-            setIsUploading(false)
-        }
-    }
-
     const handleAddLocation = async (e) => {
         e.preventDefault()
         setIsAdding(true)
@@ -228,72 +171,31 @@ export default function TripDetails() {
             const token = await auth.currentUser.getIdToken()
             const response = await fetch(`${import.meta.env.VITE_API_BASE_URL}/trips/${id}/locations`, {
                 method: 'POST',
-                headers: {
-                    'Authorization': `Bearer ${token}`,
-                    'Content-Type': 'application/json'
-                },
+                headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
                 body: JSON.stringify({ ...newLocation, sortOrder: locations.length })
             })
             if (response.ok) {
                 const data = await response.json()
                 setLocations([...locations, data.location])
-                clearDraftSelection()
+                clearDraftSelection() 
             }
-        } catch (error) {
-            console.error('Failed to add location:', error)
-        } finally {
-            setIsAdding(false)
-        }
+        } catch (error) { console.error('Failed to add location:', error)
+        } finally { setIsAdding(false) }
     }
 
     const handleDeleteLocation = async (locationId) => {
         if (!window.confirm("Are you sure you want to remove this place?")) return;
-
         try {
             const token = await auth.currentUser.getIdToken();
             const response = await fetch(`${import.meta.env.VITE_API_BASE_URL}/trips/${id}/locations/${locationId}`, {
-                method: 'DELETE',
-                headers: { 'Authorization': `Bearer ${token}` }
+                method: 'DELETE', headers: { 'Authorization': `Bearer ${token}` }
             });
-
-            if (response.ok) {
-                setLocations(prev => prev.filter(loc => loc.id !== locationId));
-            } else {
-                alert("Failed to delete location");
-            }
-        } catch (error) {
-            console.error("Error deleting location:", error);
-        }
+            if (response.ok) setLocations(prev => prev.filter(loc => loc.id !== locationId));
+        } catch (error) { console.error("Error deleting location:", error); }
     };
-
-    const handleInvite = async (e) => {
-        e.preventDefault()
-        setIsInviting(true)
-        try {
-            const token = await auth.currentUser.getIdToken()
-            const response = await fetch(`${import.meta.env.VITE_API_BASE_URL}/trips/${id}/invite`, {
-                method: 'POST',
-                headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
-                body: JSON.stringify({ name: e.target.memberName.value, email: e.target.memberEmail.value })
-            })
-            if (response.ok) {
-                // Refresh members to instantly show the new person
-                const membersData = await fetchApi(`/trips/${id}/members`);
-                setMembers(membersData.members);
-                setInviteEmail('')
-                e.target.reset();
-                alert('Member added successfully!')
-            }
-        } catch (error) {
-            console.error('Error:', error)
-        } finally {
-            setIsInviting(false)
-        }
-    }
 
     const handleDragEnd = async (result) => {
         if (!result.destination) return;
-
         const items = Array.from(locations);
         const [reorderedItem] = items.splice(result.source.index, 1);
         items.splice(result.destination.index, 0, reorderedItem);
@@ -306,14 +208,120 @@ export default function TripDetails() {
             await fetch(`${import.meta.env.VITE_API_BASE_URL}/trips/${id}/locations/reorder`, {
                 method: 'PUT',
                 headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
-                body: JSON.stringify({ 
-                    updates: updatedLocations.map(loc => ({ id: loc.id, sortOrder: loc.sortOrder, dayNumber: loc.dayNumber })) 
-                })
+                body: JSON.stringify({ updates: updatedLocations.map(loc => ({ id: loc.id, sortOrder: loc.sortOrder, dayNumber: loc.dayNumber })) })
             });
-        } catch (error) {
-            console.error('Failed to save new order:', error);
-        }
+        } catch (error) { console.error('Failed to save new order:', error); }
     };
+
+    // --- PHOTO MANAGEMENT HANDLERS (NEW) ---
+    const toggleTag = (userId) => {
+        if (!userId) return; 
+        setSelectedTags(prev => prev.includes(userId) ? prev.filter(uid => uid !== userId) : [...prev, userId])
+    }
+    const toggleModalTag = (userId) => {
+        if (!userId) return;
+        setModalTags(prev => prev.includes(userId) ? prev.filter(uid => uid !== userId) : [...prev, userId])
+    }
+
+    const handlePhotoUpload = async (e) => {
+        const files = Array.from(e.target.files)
+        if (!files.length) return
+        setIsUploading(true)
+
+        const formData = new FormData()
+        // Append all selected files to the 'photos' key
+        files.forEach(file => formData.append('photos', file))
+
+        if (selectedTags.length > 0) {
+            const validTags = selectedTags.filter(uid => uid !== null);
+            formData.append('visibility', JSON.stringify(validTags))
+        }
+
+        try {
+            const data = await fetchApi(`/trips/${id}/photos`, { method: 'POST', body: formData })
+            setPhotos(prev => [...prev, ...data.photos]) // Add all new photos
+            setSelectedTags([])
+        } catch (error) {
+            alert('Failed to upload photos')
+        } finally {
+            setIsUploading(false)
+        }
+    }
+
+    const handleUpdatePhotoTags = async (photoId) => {
+        try {
+            const token = await auth.currentUser.getIdToken();
+            const response = await fetch(`${import.meta.env.VITE_API_BASE_URL}/trips/${id}/photos/${photoId}`, {
+                method: 'PUT',
+                headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+                body: JSON.stringify({ visibility: modalTags.length === 0 ? ['ALL'] : modalTags })
+            });
+            if (response.ok) {
+                const data = await response.json();
+                setPhotos(prev => prev.map(p => p.id === photoId ? data.photo : p));
+                alert("Tags saved successfully!");
+            }
+        } catch (error) {
+            console.error("Error updating tags:", error);
+        }
+    }
+
+    const handleDeletePhoto = async (photoId) => {
+        if (!window.confirm("Are you sure you want to permanently delete this photo?")) return;
+        try {
+            const token = await auth.currentUser.getIdToken();
+            const response = await fetch(`${import.meta.env.VITE_API_BASE_URL}/trips/${id}/photos/${photoId}`, {
+                method: 'DELETE',
+                headers: { 'Authorization': `Bearer ${token}` }
+            });
+            if (response.ok) {
+                setPhotos(prev => prev.filter(p => p.id !== photoId));
+                setSelectedPhoto(null); // Close modal
+            }
+        } catch (error) {
+            console.error("Error deleting photo:", error);
+        }
+    }
+
+    // Force Download image (bypasses browser "open in new tab" behavior)
+    const handleDownloadPhoto = async (url) => {
+        try {
+            const response = await fetch(url);
+            const blob = await response.blob();
+            const blobUrl = window.URL.createObjectURL(blob);
+            const link = document.createElement('a');
+            link.href = blobUrl;
+            link.download = `golocal-trip-${Date.now()}.jpg`;
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+        } catch (err) {
+            console.error("Download failed:", err);
+            // Fallback
+            window.open(url, '_blank');
+        }
+    }
+
+    const handleInvite = async (e) => {
+        e.preventDefault()
+        setIsInviting(true)
+        try {
+            const token = await auth.currentUser.getIdToken()
+            const response = await fetch(`${import.meta.env.VITE_API_BASE_URL}/trips/${id}/invite`, {
+                method: 'POST',
+                headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+                body: JSON.stringify({ name: e.target.memberName.value, email: e.target.memberEmail.value })
+            })
+            if (response.ok) {
+                const membersData = await fetchApi(`/trips/${id}/members`);
+                setMembers(membersData.members);
+                setInviteEmail('')
+                e.target.reset();
+                alert('Member added successfully!')
+            }
+        } catch (error) { console.error('Error:', error)
+        } finally { setIsInviting(false) }
+    }
 
     const mapCenter = draftLocation 
         ? { lat: draftLocation.lat, lng: draftLocation.lng }
@@ -407,7 +415,7 @@ export default function TripDetails() {
                             </form>
                         </div>
 
-                        {/* TRIP CREW BOX (Upgraded with Role Management) */}
+                        {/* TRIP CREW BOX */}
                         <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 h-fit">
                             <h2 className="text-lg font-semibold mb-4 text-gray-800 flex items-center gap-2">
                                 👥 The Crew
@@ -426,7 +434,6 @@ export default function TripDetails() {
                                                 {member.role.replace('_', ' ')}
                                             </span>
                                             
-                                            {/* Settings Gear: Only visible if you are the host, and it's not yourself */}
                                             {isHost && member.userId !== auth.currentUser?.uid && (
                                                 <div className="relative">
                                                     <button 
@@ -435,8 +442,6 @@ export default function TripDetails() {
                                                     >
                                                         ⚙️
                                                     </button>
-                                                    
-                                                    {/* Dropdown Menu */}
                                                     {openMemberMenu === member.id && (
                                                         <div className="absolute right-0 top-full mt-1 w-44 bg-white border border-gray-200 rounded-lg shadow-xl z-50 overflow-hidden">
                                                             {member.role !== 'host' && (
@@ -468,13 +473,14 @@ export default function TripDetails() {
                             </div>
                         </div>
 
+                        {/* UPLOAD PHOTOS */}
                         <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 h-fit">
                             <h2 className="text-lg font-semibold mb-3 text-gray-800 flex items-center gap-2">
-                                📸 Trip Photos
+                                📸 Add Photos
                             </h2>
 
                             <div className="mb-4">
-                                <label className="block text-sm font-medium text-gray-700 mb-2">Who can see this? (Leave empty for everyone)</label>
+                                <label className="block text-sm font-medium text-gray-700 mb-2">Who can see these? (Leave empty for everyone)</label>
                                 <div className="flex flex-wrap gap-2">
                                     {members.filter(m => m.userId).map(member => (
                                         <button
@@ -494,9 +500,10 @@ export default function TripDetails() {
 
                             <label className={`w-full flex items-center justify-center border-2 border-dashed border-gray-300 rounded-lg p-4 cursor-pointer hover:bg-gray-50 transition ${isUploading ? 'opacity-50 pointer-events-none' : ''}`}>
                                 <span className="text-sm font-medium text-gray-600">
-                                    {isUploading ? 'Uploading...' : 'Click to Upload Photo'}
+                                    {isUploading ? 'Uploading...' : 'Click to Upload Multiple Photos'}
                                 </span>
-                                <input type="file" accept="image/*" className="hidden" onChange={handlePhotoUpload} disabled={isUploading} />
+                                {/* NEW: Added multiple attribute */}
+                                <input type="file" accept="image/*" multiple className="hidden" onChange={handlePhotoUpload} disabled={isUploading} />
                             </label>
                         </div>
 
@@ -539,12 +546,7 @@ export default function TripDetails() {
                                 {polylineCoords.length > 1 && (
                                     <Polyline 
                                         positions={polylineCoords} 
-                                        pathOptions={{ 
-                                            color: '#4f46e5',
-                                            weight: 4, 
-                                            dashArray: '10, 10', 
-                                            lineJoin: 'round'
-                                        }} 
+                                        pathOptions={{ color: '#4f46e5', weight: 4, dashArray: '10, 10', lineJoin: 'round' }} 
                                     />
                                 )}
 
@@ -554,9 +556,7 @@ export default function TripDetails() {
                                         position={[Number(loc.lat), Number(loc.lng)]}
                                         icon={createNumberedIcon(index + 1)}
                                     >
-                                        <Popup>
-                                            <strong>Stop {index + 1} (Day {loc.dayNumber}):</strong> {loc.name}
-                                        </Popup>
+                                        <Popup><strong>Stop {index + 1} (Day {loc.dayNumber}):</strong> {loc.name}</Popup>
                                     </Marker>
                                 ))}
 
@@ -599,17 +599,14 @@ export default function TripDetails() {
                                                                 <span className="text-gray-400 cursor-grab active:cursor-grabbing">
                                                                     <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 8h16M4 16h16" /></svg>
                                                                 </span>
-                                                                
                                                                 <div className="bg-indigo-100 text-indigo-700 w-8 h-8 rounded-full flex items-center justify-center font-bold text-sm shrink-0">
                                                                     {index + 1}
                                                                 </div>
-
                                                                 <div>
                                                                     <h3 className="font-bold text-gray-800 text-lg">{loc.name}</h3>
                                                                     {loc.address && <p className="text-sm text-gray-500">{loc.address}</p>}
                                                                 </div>
                                                             </div>
-                                                            
                                                             <div className="flex items-center gap-3">
                                                                 <span className="bg-gray-100 text-gray-700 text-sm font-semibold px-4 py-1.5 rounded-full border border-gray-200">
                                                                     Day {loc.dayNumber}
@@ -638,7 +635,14 @@ export default function TripDetails() {
                             ) : (
                                 <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
                                     {photos.map((photo) => (
-                                        <div key={photo.id} className="aspect-square rounded-xl overflow-hidden shadow-sm border border-gray-200 bg-gray-100">
+                                        <div 
+                                            key={photo.id} 
+                                            onClick={() => {
+                                                setSelectedPhoto(photo);
+                                                setModalTags(photo.visibility.includes('ALL') ? [] : photo.visibility);
+                                            }}
+                                            className="aspect-square rounded-xl overflow-hidden shadow-sm border border-gray-200 bg-gray-100 cursor-pointer"
+                                        >
                                             <img
                                                 src={photo.imageUrl}
                                                 alt="Trip Memory"
@@ -659,6 +663,97 @@ export default function TripDetails() {
 
                 </div>
             </div>
+
+            {/* --- NEW: PHOTO LIGHTBOX MODAL --- */}
+            {selectedPhoto && (
+                <div className="fixed inset-0 z-[100] bg-black/90 flex items-center justify-center p-4 sm:p-8 backdrop-blur-sm">
+                    
+                    {/* Close Button */}
+                    <button 
+                        onClick={() => setSelectedPhoto(null)} 
+                        className="absolute top-4 right-4 sm:top-8 sm:right-8 text-white/70 hover:text-white bg-black/50 hover:bg-black/80 rounded-full w-10 h-10 flex items-center justify-center transition z-10"
+                    >
+                        ✕
+                    </button>
+
+                    <div className="bg-white rounded-2xl overflow-hidden flex flex-col md:flex-row max-w-6xl w-full max-h-full shadow-2xl">
+                        
+                        {/* Image Viewer (Left Side) */}
+                        <div className="flex-1 bg-black flex items-center justify-center min-h-[300px] md:min-h-[500px] p-4 relative group">
+                            <img 
+                                src={selectedPhoto.imageUrl} 
+                                alt="Selected Trip Memory" 
+                                className="max-w-full max-h-[80vh] object-contain"
+                            />
+                            
+                            {/* Floating Download Button */}
+                            <button 
+                                onClick={() => handleDownloadPhoto(selectedPhoto.imageUrl)}
+                                className="absolute bottom-4 right-4 bg-white/90 text-gray-900 px-4 py-2 rounded-lg text-sm font-semibold shadow-lg hover:bg-white transition flex items-center gap-2"
+                            >
+                                ⬇️ Download
+                            </button>
+                        </div>
+
+                        {/* Photo Settings (Right Side) */}
+                        <div className="w-full md:w-80 bg-gray-50 p-6 flex flex-col border-l border-gray-200">
+                            
+                            <h3 className="text-lg font-bold text-gray-900 mb-6 border-b pb-4">Photo Settings</h3>
+
+                            {/* Tags Section */}
+                            <div className="flex-1">
+                                <label className="block text-sm font-semibold text-gray-700 mb-2">Visible to:</label>
+                                <p className="text-xs text-gray-500 mb-3">Only selected members will see this photo. Leave blank for everyone.</p>
+                                
+                                <div className="flex flex-wrap gap-2 mb-6">
+                                    {members.filter(m => m.userId).map(member => {
+                                        // You can only edit tags if you are the host, or the original uploader.
+                                        const canEdit = isHost || selectedPhoto.uploaderId === auth.currentUser?.uid;
+                                        
+                                        return (
+                                            <button
+                                                key={member.id}
+                                                type="button"
+                                                disabled={!canEdit}
+                                                onClick={() => toggleModalTag(member.userId)}
+                                                className={`text-xs px-3 py-1.5 rounded-full border font-medium transition ${
+                                                    modalTags.includes(member.userId)
+                                                        ? 'bg-indigo-600 text-white border-indigo-600'
+                                                        : 'bg-white text-gray-600 border-gray-300 hover:bg-gray-100'
+                                                } ${!canEdit ? 'opacity-75 cursor-not-allowed' : ''}`}
+                                            >
+                                                {member.displayName}
+                                            </button>
+                                        )
+                                    })}
+                                </div>
+
+                                {(isHost || selectedPhoto.uploaderId === auth.currentUser?.uid) && (
+                                    <button 
+                                        onClick={() => handleUpdatePhotoTags(selectedPhoto.id)}
+                                        className="w-full bg-indigo-100 text-indigo-700 hover:bg-indigo-200 py-2 rounded-lg text-sm font-semibold transition"
+                                    >
+                                        Save Changes
+                                    </button>
+                                )}
+                            </div>
+
+                            {/* Delete Section */}
+                            {(isHost || selectedPhoto.uploaderId === auth.currentUser?.uid) && (
+                                <div className="mt-8 pt-6 border-t border-gray-200">
+                                    <button 
+                                        onClick={() => handleDeletePhoto(selectedPhoto.id)}
+                                        className="w-full bg-red-50 text-red-600 hover:bg-red-100 border border-red-200 py-2.5 rounded-lg text-sm font-semibold transition"
+                                    >
+                                        Delete Photo
+                                    </button>
+                                </div>
+                            )}
+
+                        </div>
+                    </div>
+                </div>
+            )}
         </div>
     )
 }

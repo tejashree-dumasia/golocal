@@ -246,45 +246,6 @@ router.get('/:tripId/photos', verifyToken, async (req, res) => {
   }
 });
 
-router.post('/:tripId/photos', verifyToken, upload.single('photo'), async (req, res) => {
-  try {
-    if (!req.file) return res.status(400).json({ error: 'No image file provided' });
-
-    let visibilityArray = ['ALL'];
-    if (req.body.visibility) {
-       try {
-         visibilityArray = JSON.parse(req.body.visibility);
-       } catch (e) {
-         visibilityArray = req.body.visibility.split(',');
-       }
-    }
-
-    const uploadToCloudinary = (buffer) => {
-      return new Promise((resolve, reject) => {
-        const stream = cloudinary.uploader.upload_stream(
-          { folder: `golocal/trips/${req.params.tripId}` }, 
-          (error, result) => result ? resolve(result) : reject(error)
-        );
-        stream.end(buffer);
-      });
-    };
-
-    const cloudResult = await uploadToCloudinary(req.file.buffer);
-
-    const newPhoto = await db.insert(schema.photos).values({
-      tripId: req.params.tripId,
-      uploaderId: req.user.uid,
-      imageUrl: cloudResult.secure_url,
-      visibility: visibilityArray
-    }).returning();
-
-    res.status(201).json({ message: 'Photo uploaded', photo: newPhoto[0] });
-  } catch (error) {
-    console.error('Error uploading photo:', error);
-    res.status(500).json({ error: 'Failed to upload photo' });
-  }
-});
-
 router.get('/:tripId/messages', verifyToken, async (req, res) => {
   try {
     const chatHistory = await db
@@ -445,6 +406,109 @@ router.delete('/:tripId/members/:memberId', verifyToken, async (req, res) => {
     } catch (error) {
         console.error('Error removing member:', error);
         res.status(500).json({ error: 'Failed to remove member' });
+    }
+});
+
+// --- REPLACE YOUR EXISTING PHOTO UPLOAD ROUTE WITH THIS ---
+// Using upload.array('photos', 10) allows up to 10 photos at once
+router.post('/:tripId/photos', verifyToken, upload.array('photos', 10), async (req, res) => {
+    try {
+        if (!req.files || req.files.length === 0) return res.status(400).json({ error: 'No image files provided' });
+
+        let visibilityArray = ['ALL'];
+        if (req.body.visibility) {
+            try {
+                visibilityArray = JSON.parse(req.body.visibility);
+            } catch (e) {
+                visibilityArray = req.body.visibility.split(',');
+            }
+        }
+
+        const uploadToCloudinary = (buffer) => {
+            return new Promise((resolve, reject) => {
+                const stream = cloudinary.uploader.upload_stream(
+                    { folder: `golocal/trips/${req.params.tripId}` }, 
+                    (error, result) => result ? resolve(result) : reject(error)
+                );
+                stream.end(buffer);
+            });
+        };
+
+        // Upload all files concurrently
+        const uploadedPhotos = await Promise.all(req.files.map(async (file) => {
+            const cloudResult = await uploadToCloudinary(file.buffer);
+            const newPhoto = await db.insert(schema.photos).values({
+                tripId: req.params.tripId,
+                uploaderId: req.user.uid,
+                imageUrl: cloudResult.secure_url,
+                visibility: visibilityArray
+            }).returning();
+            return newPhoto[0];
+        }));
+
+        res.status(201).json({ message: 'Photos uploaded successfully', photos: uploadedPhotos });
+    } catch (error) {
+        console.error('Error uploading photos:', error);
+        res.status(500).json({ error: 'Failed to upload photos' });
+    }
+});
+
+// --- ADD THESE TWO NEW ROUTES FOR PHOTO MANAGEMENT ---
+
+// UPDATE PHOTO TAGS
+router.put('/:tripId/photos/:photoId', verifyToken, async (req, res) => {
+    try {
+        const { tripId, photoId } = req.params;
+        const { visibility } = req.body;
+
+        const photo = await db.select().from(schema.photos).where(eq(schema.photos.id, photoId));
+        if (!photo.length) return res.status(404).json({ error: 'Photo not found' });
+
+        const membership = await db.select().from(schema.tripMembers)
+            .where(and(eq(schema.tripMembers.tripId, tripId), eq(schema.tripMembers.userId, req.user.uid)));
+
+        const isHost = membership.length && (membership[0].role === 'host' || membership[0].role === 'co_host');
+        const isOwner = photo[0].uploaderId === req.user.uid;
+
+        if (!isHost && !isOwner) {
+            return res.status(403).json({ error: 'Not authorized to edit this photo' });
+        }
+
+        const updated = await db.update(schema.photos)
+            .set({ visibility })
+            .where(eq(schema.photos.id, photoId))
+            .returning();
+
+        res.status(200).json({ message: 'Photo tags updated', photo: updated[0] });
+    } catch (error) {
+        console.error('Error updating photo:', error);
+        res.status(500).json({ error: 'Failed to update photo' });
+    }
+});
+
+// DELETE (ARCHIVE) PHOTO
+router.delete('/:tripId/photos/:photoId', verifyToken, async (req, res) => {
+    try {
+        const { tripId, photoId } = req.params;
+
+        const photo = await db.select().from(schema.photos).where(eq(schema.photos.id, photoId));
+        if (!photo.length) return res.status(404).json({ error: 'Photo not found' });
+
+        const membership = await db.select().from(schema.tripMembers)
+            .where(and(eq(schema.tripMembers.tripId, tripId), eq(schema.tripMembers.userId, req.user.uid)));
+
+        const isHost = membership.length && (membership[0].role === 'host' || membership[0].role === 'co_host');
+        const isOwner = photo[0].uploaderId === req.user.uid;
+
+        if (!isHost && !isOwner) {
+            return res.status(403).json({ error: 'Not authorized to delete this photo' });
+        }
+
+        await db.delete(schema.photos).where(eq(schema.photos.id, photoId));
+        res.status(200).json({ message: 'Photo deleted successfully' });
+    } catch (error) {
+        console.error('Error deleting photo:', error);
+        res.status(500).json({ error: 'Failed to delete photo' });
     }
 });
 
